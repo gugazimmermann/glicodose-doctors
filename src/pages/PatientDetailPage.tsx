@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { EntryDetailModal } from '../components/EntryDetailModal'
+import { PatientCharts } from '../components/PatientCharts'
 import { supabase } from '../lib/supabase'
 import {
   diabetesTypeLabel,
@@ -18,6 +19,7 @@ type PrescriptionForm = {
 }
 
 type HistorySort = 'newest' | 'oldest'
+type DetailTab = 'prescription' | 'history' | 'charts'
 
 const HISTORY_PAGE_SIZE = 50
 
@@ -64,6 +66,7 @@ export function PatientDetailPage() {
   const [saveSuccess, setSaveSuccess] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   const [selectedEntry, setSelectedEntry] = useState<Entry | null>(null)
+  const [detailTab, setDetailTab] = useState<DetailTab>('history')
 
   const totalPages = Math.max(
     1,
@@ -247,276 +250,331 @@ export function PatientDetailPage() {
         </p>
       </div>
 
-      <form
-        onSubmit={onSavePrescription}
-        className="space-y-4 rounded-2xl border border-line bg-card p-5 shadow-sm sm:p-6"
-      >
-        <div>
-          <h2 className="text-sm font-semibold uppercase tracking-wide text-muted">
-            Prescrição
-          </h2>
-          <p className="mt-1 text-sm text-muted">
-            Altere os parâmetros usados no cálculo de insulina do paciente.
-          </p>
-        </div>
-
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
-          <label className="block">
-            <span className="text-xs font-semibold uppercase tracking-wide text-muted">
-              Meta dia (mg/dL)
-            </span>
-            <input
-              type="number"
-              min={1}
-              step="any"
-              value={form.target_glucose_mgdl}
-              onChange={(e) =>
-                setForm((f) =>
-                  f ? { ...f, target_glucose_mgdl: e.target.value } : f,
-                )
-              }
-              className={inputClass}
-              required
-            />
-          </label>
-          <label className="block">
-            <span className="text-xs font-semibold uppercase tracking-wide text-muted">
-              Meta noite (mg/dL)
-            </span>
-            <input
-              type="number"
-              min={1}
-              step="any"
-              value={form.target_night_mgdl}
-              onChange={(e) =>
-                setForm((f) =>
-                  f ? { ...f, target_night_mgdl: e.target.value } : f,
-                )
-              }
-              className={inputClass}
-              required
-            />
-          </label>
-          <label className="block">
-            <span className="text-xs font-semibold uppercase tracking-wide text-muted">
-              FSI (mg/dL/U)
-            </span>
-            <input
-              type="number"
-              min={1}
-              step="any"
-              value={form.isf_mgdl_per_u}
-              onChange={(e) =>
-                setForm((f) =>
-                  f ? { ...f, isf_mgdl_per_u: e.target.value } : f,
-                )
-              }
-              className={inputClass}
-              required
-            />
-          </label>
-          <label className="block">
-            <span className="text-xs font-semibold uppercase tracking-wide text-muted">
-              I:C (g por 1 U)
-            </span>
-            <input
-              type="number"
-              min={1}
-              step="any"
-              value={form.ic_ratio}
-              onChange={(e) =>
-                setForm((f) => (f ? { ...f, ic_ratio: e.target.value } : f))
-              }
-              className={inputClass}
-              required
-            />
-          </label>
-          <label className="block">
-            <span className="text-xs font-semibold uppercase tracking-wide text-muted">
-              Insulina rápida
-            </span>
-            <input
-              type="text"
-              value={form.rapid_insulin_name}
-              onChange={(e) =>
-                setForm((f) =>
-                  f ? { ...f, rapid_insulin_name: e.target.value } : f,
-                )
-              }
-              className={inputClass}
-              required
-            />
-          </label>
-        </div>
-
-        {saveError && (
-          <p className="rounded-lg bg-danger-soft px-3 py-2 text-sm text-danger">
-            {saveError}
-          </p>
-        )}
-        {saveSuccess && (
-          <p className="rounded-lg bg-brand-soft px-3 py-2 text-sm text-brand-dark">
-            {saveSuccess}
-          </p>
-        )}
-
-        <button
-          type="submit"
-          disabled={saving}
-          className="rounded-xl bg-brand px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-brand-dark disabled:opacity-60"
+      <div>
+        <div
+          role="tablist"
+          aria-label="Paciente"
+          className="flex flex-wrap gap-1 border-b border-line"
         >
-          {saving ? 'Salvando…' : 'Salvar prescrição'}
-        </button>
-      </form>
-
-      <section>
-        <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <h2 className="text-sm font-semibold uppercase tracking-wide text-muted">
-            Histórico ({entriesTotal})
-            {historyLoading ? ' · atualizando…' : ''}
-          </h2>
-          {entriesTotal > 0 && (
-            <label className="flex items-center gap-2 text-sm text-muted">
-              <span className="whitespace-nowrap">Ordenar</span>
-              <select
-                value={historySort}
-                onChange={(e) => {
-                  setHistorySort(e.target.value as HistorySort)
-                  setHistoryPage(0)
-                }}
-                className="rounded-lg border border-line bg-white px-3 py-1.5 text-sm text-ink outline-none transition focus:border-brand focus:ring-2 focus:ring-brand/20"
+          {(
+            [
+              { id: 'prescription', label: 'Prescrição' },
+              { id: 'history', label: `Histórico (${entriesTotal})` },
+              { id: 'charts', label: 'Gráficos' },
+            ] as const
+          ).map((tab) => {
+            const selected = detailTab === tab.id
+            return (
+              <button
+                key={tab.id}
+                type="button"
+                role="tab"
+                aria-selected={selected}
+                onClick={() => setDetailTab(tab.id)}
+                className={`-mb-px border-b-2 px-4 py-2.5 text-sm font-semibold transition ${
+                  selected
+                    ? 'border-brand text-brand-dark'
+                    : 'border-transparent text-muted hover:text-ink'
+                }`}
               >
-                <option value="newest">Mais recentes</option>
-                <option value="oldest">Mais antigos</option>
-              </select>
-            </label>
-          )}
+                {tab.label}
+              </button>
+            )
+          })}
         </div>
 
-        {entriesTotal === 0 && !historyLoading ? (
-          <div className="rounded-2xl border border-dashed border-line bg-card/60 px-5 py-10 text-center">
-            <p className="text-sm text-muted">Nenhum registro ainda.</p>
-          </div>
-        ) : (
-          <>
-            <ul className="space-y-3 md:hidden">
-              {entries.map((entry) => (
-                <li key={entry.id}>
-                  <button
-                    type="button"
-                    onClick={() => setSelectedEntry(entry)}
-                    className="w-full rounded-2xl border border-line bg-card p-4 text-left shadow-sm transition hover:border-brand/40 hover:bg-brand-soft/20"
-                  >
-                    <p className="text-xs font-medium text-muted">
-                      {formatBrazilDateTime(entry.recorded_at)}
-                    </p>
-                    <p className="mt-1 text-lg font-bold text-ink">
-                      {entry.glucose_mgdl}{' '}
-                      <span className="text-sm font-medium text-muted">
-                        mg/dL
-                      </span>
-                    </p>
-                    {entry.food_text && (
-                      <p className="mt-2 text-sm text-ink">{entry.food_text}</p>
-                    )}
-                    <div className="mt-3 flex gap-4 text-sm">
-                      <span>
-                        Rec:{' '}
-                        <strong>
-                          {formatDose(entry.recommended_insulin)} U
-                        </strong>
-                      </span>
-                      <span>
-                        Apl:{' '}
-                        <strong>{formatDose(entry.applied_insulin)} U</strong>
-                      </span>
-                    </div>
-                  </button>
-                </li>
-              ))}
-            </ul>
-
-            <div className="hidden overflow-hidden rounded-2xl border border-line bg-card shadow-sm md:block">
-              <div className="overflow-x-auto">
-                <table className="w-full min-w-[640px] text-left text-sm">
-                  <thead className="border-b border-line bg-brand-soft/50 text-xs uppercase tracking-wide text-muted">
-                    <tr>
-                      <th className="px-4 py-3 font-semibold">Data / hora</th>
-                      <th className="px-4 py-3 font-semibold">Glicemia</th>
-                      <th className="px-4 py-3 font-semibold">Comida</th>
-                      <th className="px-4 py-3 font-semibold">Recomendada</th>
-                      <th className="px-4 py-3 font-semibold">Aplicada</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {entries.map((entry) => (
-                      <tr
-                        key={entry.id}
-                        tabIndex={0}
-                        role="button"
-                        onClick={() => setSelectedEntry(entry)}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter' || e.key === ' ') {
-                            e.preventDefault()
-                            setSelectedEntry(entry)
-                          }
-                        }}
-                        className="cursor-pointer border-b border-line/70 last:border-0 hover:bg-brand-soft/30"
-                      >
-                        <td className="whitespace-nowrap px-4 py-3 text-muted">
-                          {formatBrazilDateTime(entry.recorded_at)}
-                        </td>
-                        <td className="px-4 py-3 font-semibold text-ink">
-                          {entry.glucose_mgdl} mg/dL
-                        </td>
-                        <td className="max-w-xs truncate px-4 py-3 text-ink">
-                          {entry.food_text?.trim() ||
-                            (entry.food_image_path ? 'Foto anexada' : '—')}
-                        </td>
-                        <td className="px-4 py-3">
-                          {formatDose(entry.recommended_insulin)} U
-                        </td>
-                        <td className="px-4 py-3">
-                          {formatDose(entry.applied_insulin)} U
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+        {detailTab === 'prescription' ? (
+          <form
+            onSubmit={onSavePrescription}
+            className="mt-4 space-y-4 rounded-2xl border border-line bg-card p-5 shadow-sm sm:p-6"
+            role="tabpanel"
+          >
+            <div>
+              <h2 className="sr-only">Prescrição</h2>
+              <p className="text-sm text-muted">
+                Altere os parâmetros usados no cálculo de insulina do paciente.
+              </p>
             </div>
 
-            {entriesTotal > HISTORY_PAGE_SIZE && (
-              <div className="mt-4 flex flex-col items-center gap-3 sm:flex-row sm:justify-between">
-                <p className="text-sm text-muted">
-                  Página {historyPage + 1} de {totalPages} · {HISTORY_PAGE_SIZE}{' '}
-                  por página
-                </p>
-                <div className="flex gap-2">
-                  <button
-                    type="button"
-                    disabled={historyPage <= 0 || historyLoading}
-                    onClick={() => setHistoryPage((p) => Math.max(0, p - 1))}
-                    className="rounded-lg border border-line px-3 py-1.5 text-sm font-medium text-muted transition hover:border-brand hover:text-brand disabled:cursor-not-allowed disabled:opacity-40"
-                  >
-                    Anterior
-                  </button>
-                  <button
-                    type="button"
-                    disabled={
-                      historyPage + 1 >= totalPages || historyLoading
-                    }
-                    onClick={() => setHistoryPage((p) => p + 1)}
-                    className="rounded-lg border border-line px-3 py-1.5 text-sm font-medium text-muted transition hover:border-brand hover:text-brand disabled:cursor-not-allowed disabled:opacity-40"
-                  >
-                    Próxima
-                  </button>
-                </div>
-              </div>
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
+              <label className="block">
+                <span className="text-xs font-semibold uppercase tracking-wide text-muted">
+                  Meta dia (mg/dL)
+                </span>
+                <input
+                  type="number"
+                  min={1}
+                  step="any"
+                  value={form.target_glucose_mgdl}
+                  onChange={(e) =>
+                    setForm((f) =>
+                      f ? { ...f, target_glucose_mgdl: e.target.value } : f,
+                    )
+                  }
+                  className={inputClass}
+                  required
+                />
+              </label>
+              <label className="block">
+                <span className="text-xs font-semibold uppercase tracking-wide text-muted">
+                  Meta noite (mg/dL)
+                </span>
+                <input
+                  type="number"
+                  min={1}
+                  step="any"
+                  value={form.target_night_mgdl}
+                  onChange={(e) =>
+                    setForm((f) =>
+                      f ? { ...f, target_night_mgdl: e.target.value } : f,
+                    )
+                  }
+                  className={inputClass}
+                  required
+                />
+              </label>
+              <label className="block">
+                <span className="text-xs font-semibold uppercase tracking-wide text-muted">
+                  FSI (mg/dL/U)
+                </span>
+                <input
+                  type="number"
+                  min={1}
+                  step="any"
+                  value={form.isf_mgdl_per_u}
+                  onChange={(e) =>
+                    setForm((f) =>
+                      f ? { ...f, isf_mgdl_per_u: e.target.value } : f,
+                    )
+                  }
+                  className={inputClass}
+                  required
+                />
+              </label>
+              <label className="block">
+                <span className="text-xs font-semibold uppercase tracking-wide text-muted">
+                  I:C (g por 1 U)
+                </span>
+                <input
+                  type="number"
+                  min={1}
+                  step="any"
+                  value={form.ic_ratio}
+                  onChange={(e) =>
+                    setForm((f) =>
+                      f ? { ...f, ic_ratio: e.target.value } : f,
+                    )
+                  }
+                  className={inputClass}
+                  required
+                />
+              </label>
+              <label className="block">
+                <span className="text-xs font-semibold uppercase tracking-wide text-muted">
+                  Insulina rápida
+                </span>
+                <input
+                  type="text"
+                  value={form.rapid_insulin_name}
+                  onChange={(e) =>
+                    setForm((f) =>
+                      f ? { ...f, rapid_insulin_name: e.target.value } : f,
+                    )
+                  }
+                  className={inputClass}
+                  required
+                />
+              </label>
+            </div>
+
+            {saveError && (
+              <p className="rounded-lg bg-danger-soft px-3 py-2 text-sm text-danger">
+                {saveError}
+              </p>
             )}
-          </>
+            {saveSuccess && (
+              <p className="rounded-lg bg-brand-soft px-3 py-2 text-sm text-brand-dark">
+                {saveSuccess}
+              </p>
+            )}
+
+            <button
+              type="submit"
+              disabled={saving}
+              className="rounded-xl bg-brand px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-brand-dark disabled:opacity-60"
+            >
+              {saving ? 'Salvando…' : 'Salvar prescrição'}
+            </button>
+          </form>
+        ) : detailTab === 'history' ? (
+          <section className="mt-4" role="tabpanel">
+            <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <h2 className="sr-only">Histórico</h2>
+              {historyLoading ? (
+                <p className="text-sm text-muted">Atualizando…</p>
+              ) : (
+                <span />
+              )}
+              {entriesTotal > 0 && (
+                <label className="flex items-center gap-2 text-sm text-muted">
+                  <span className="whitespace-nowrap">Ordenar</span>
+                  <select
+                    value={historySort}
+                    onChange={(e) => {
+                      setHistorySort(e.target.value as HistorySort)
+                      setHistoryPage(0)
+                    }}
+                    className="rounded-lg border border-line bg-white px-3 py-1.5 text-sm text-ink outline-none transition focus:border-brand focus:ring-2 focus:ring-brand/20"
+                  >
+                    <option value="newest">Mais recentes</option>
+                    <option value="oldest">Mais antigos</option>
+                  </select>
+                </label>
+              )}
+            </div>
+
+            {entriesTotal === 0 && !historyLoading ? (
+              <div className="rounded-2xl border border-dashed border-line bg-card/60 px-5 py-10 text-center">
+                <p className="text-sm text-muted">Nenhum registro ainda.</p>
+              </div>
+            ) : (
+              <>
+                <ul className="space-y-3 md:hidden">
+                  {entries.map((entry) => (
+                    <li key={entry.id}>
+                      <button
+                        type="button"
+                        onClick={() => setSelectedEntry(entry)}
+                        className="w-full rounded-2xl border border-line bg-card p-4 text-left shadow-sm transition hover:border-brand/40 hover:bg-brand-soft/20"
+                      >
+                        <p className="text-xs font-medium text-muted">
+                          {formatBrazilDateTime(entry.recorded_at)}
+                        </p>
+                        <p className="mt-1 text-lg font-bold text-ink">
+                          {entry.glucose_mgdl}{' '}
+                          <span className="text-sm font-medium text-muted">
+                            mg/dL
+                          </span>
+                        </p>
+                        {entry.food_text && (
+                          <p className="mt-2 text-sm text-ink">
+                            {entry.food_text}
+                          </p>
+                        )}
+                        <div className="mt-3 flex gap-4 text-sm">
+                          <span>
+                            Rec:{' '}
+                            <strong>
+                              {formatDose(entry.recommended_insulin)} U
+                            </strong>
+                          </span>
+                          <span>
+                            Apl:{' '}
+                            <strong>
+                              {formatDose(entry.applied_insulin)} U
+                            </strong>
+                          </span>
+                        </div>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+
+                <div className="hidden overflow-hidden rounded-2xl border border-line bg-card shadow-sm md:block">
+                  <div className="overflow-x-auto">
+                    <table className="w-full min-w-160 text-left text-sm">
+                      <thead className="border-b border-line bg-brand-soft/50 text-xs uppercase tracking-wide text-muted">
+                        <tr>
+                          <th className="px-4 py-3 font-semibold">
+                            Data / hora
+                          </th>
+                          <th className="px-4 py-3 font-semibold">Glicemia</th>
+                          <th className="px-4 py-3 font-semibold">Comida</th>
+                          <th className="px-4 py-3 font-semibold">
+                            Recomendada
+                          </th>
+                          <th className="px-4 py-3 font-semibold">Aplicada</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {entries.map((entry) => (
+                          <tr
+                            key={entry.id}
+                            tabIndex={0}
+                            role="button"
+                            onClick={() => setSelectedEntry(entry)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter' || e.key === ' ') {
+                                e.preventDefault()
+                                setSelectedEntry(entry)
+                              }
+                            }}
+                            className="cursor-pointer border-b border-line/70 last:border-0 hover:bg-brand-soft/30"
+                          >
+                            <td className="whitespace-nowrap px-4 py-3 text-muted">
+                              {formatBrazilDateTime(entry.recorded_at)}
+                            </td>
+                            <td className="px-4 py-3 font-semibold text-ink">
+                              {entry.glucose_mgdl} mg/dL
+                            </td>
+                            <td className="max-w-xs truncate px-4 py-3 text-ink">
+                              {entry.food_text?.trim() ||
+                                (entry.food_image_path
+                                  ? 'Foto anexada'
+                                  : '—')}
+                            </td>
+                            <td className="px-4 py-3">
+                              {formatDose(entry.recommended_insulin)} U
+                            </td>
+                            <td className="px-4 py-3">
+                              {formatDose(entry.applied_insulin)} U
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                {entriesTotal > HISTORY_PAGE_SIZE && (
+                  <div className="mt-4 flex flex-col items-center gap-3 sm:flex-row sm:justify-between">
+                    <p className="text-sm text-muted">
+                      Página {historyPage + 1} de {totalPages} ·{' '}
+                      {HISTORY_PAGE_SIZE} por página
+                    </p>
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        disabled={historyPage <= 0 || historyLoading}
+                        onClick={() =>
+                          setHistoryPage((p) => Math.max(0, p - 1))
+                        }
+                        className="rounded-lg border border-line px-3 py-1.5 text-sm font-medium text-muted transition hover:border-brand hover:text-brand disabled:cursor-not-allowed disabled:opacity-40"
+                      >
+                        Anterior
+                      </button>
+                      <button
+                        type="button"
+                        disabled={
+                          historyPage + 1 >= totalPages || historyLoading
+                        }
+                        onClick={() => setHistoryPage((p) => p + 1)}
+                        className="rounded-lg border border-line px-3 py-1.5 text-sm font-medium text-muted transition hover:border-brand hover:text-brand disabled:cursor-not-allowed disabled:opacity-40"
+                      >
+                        Próxima
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
+          </section>
+        ) : (
+          <div className="mt-4" role="tabpanel">
+            <PatientCharts patientId={profile.id} profile={profile} />
+          </div>
         )}
-      </section>
+      </div>
 
       {selectedEntry && (
         <EntryDetailModal
