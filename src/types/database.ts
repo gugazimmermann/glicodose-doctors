@@ -1,3 +1,10 @@
+export type SupporterStatus =
+  | 'none'
+  | 'active'
+  | 'grace'
+  | 'expired'
+  | 'canceled'
+
 export type Doctor = {
   id: string
   full_name: string
@@ -15,6 +22,12 @@ export type Doctor = {
   address_city: string | null
   address_state: string | null
   profile_completed_at: string | null
+  supporter_product_id: string | null
+  supporter_status: SupporterStatus
+  supporter_store: string | null
+  supporter_expires_at: string | null
+  supporter_updated_at: string | null
+  stripe_customer_id: string | null
   created_at: string
   updated_at: string
 }
@@ -39,6 +52,14 @@ export function isDoctorProfileComplete(
   doctor: Pick<Doctor, 'profile_completed_at'> | null,
 ): boolean {
   return Boolean(doctor?.profile_completed_at)
+}
+
+/** Active-enough supporter for UI badge (until expiry is mirrored). */
+export function isDoctorSupporter(
+  doctor: Pick<Doctor, 'supporter_status'> | null,
+): boolean {
+  const status = doctor?.supporter_status
+  return status === 'active' || status === 'grace' || status === 'canceled'
 }
 
 export type Profile = {

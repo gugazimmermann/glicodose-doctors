@@ -1,5 +1,7 @@
 import { Link, NavLink, useNavigate } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
+import { displayPlanLabel } from '../lib/supportProducts'
+import { isDoctorSupporter } from '../types/database'
 import { BrandLogo } from './BrandLogo'
 import { Button } from './ui/Button'
 
@@ -11,7 +13,21 @@ const navLinkClass = ({ isActive }: { isActive: boolean }) =>
       : 'text-muted hover:bg-card hover:text-ink',
   ].join(' ')
 
-function MainNav({ className = '' }: { className?: string }) {
+const supportCtaClass = ({ isActive }: { isActive: boolean }) =>
+  [
+    'rounded-lg px-3 py-1.5 text-sm font-semibold no-underline transition shadow-sm',
+    isActive
+      ? 'bg-brand-dark text-white'
+      : 'bg-brand text-white hover:bg-brand-dark',
+  ].join(' ')
+
+function MainNav({
+  className = '',
+  highlightSupport = false,
+}: {
+  className?: string
+  highlightSupport?: boolean
+}) {
   return (
     <nav className={`flex flex-wrap gap-1 ${className}`.trim()} aria-label="Principal">
       <NavLink to="/" end className={navLinkClass}>
@@ -22,6 +38,12 @@ function MainNav({ className = '' }: { className?: string }) {
       </NavLink>
       <NavLink to="/perfil" className={navLinkClass}>
         Perfil
+      </NavLink>
+      <NavLink
+        to="/apoiar"
+        className={highlightSupport ? supportCtaClass : navLinkClass}
+      >
+        Apoiar
       </NavLink>
     </nav>
   )
@@ -41,6 +63,11 @@ export function AppHeader({
   const { doctor, signOut } = useAuth()
   const navigate = useNavigate()
   const name = doctorName ?? doctor?.full_name
+  const isSupporter = isDoctorSupporter(doctor)
+  const highlightSupport = !isSupporter
+  const planTitle = isSupporter
+    ? displayPlanLabel(doctor?.supporter_product_id)
+    : undefined
 
   async function handleSignOut() {
     await signOut()
@@ -61,7 +88,17 @@ export function AppHeader({
         >
           GlicoDose Médicos
         </p>
-        <p className="truncate text-xs text-muted">{name}</p>
+        <div className="flex min-w-0 items-center gap-1.5">
+          <p className="truncate text-xs text-muted">{name}</p>
+          {isSupporter ? (
+            <span
+              className="shrink-0 rounded-md bg-brand-soft px-1.5 py-0.5 text-xs font-semibold text-brand-dark"
+              title={planTitle}
+            >
+              Apoiador
+            </span>
+          ) : null}
+        </div>
       </div>
     </>
   )
@@ -83,7 +120,12 @@ export function AppHeader({
             </div>
           )}
 
-          {showNav ? <MainNav className="hidden lg:flex" /> : null}
+          {showNav ? (
+            <MainNav
+              className="hidden lg:flex"
+              highlightSupport={highlightSupport}
+            />
+          ) : null}
 
           <Button
             variant="secondary"
@@ -95,7 +137,12 @@ export function AppHeader({
           </Button>
         </div>
 
-        {showNav ? <MainNav className="mt-3 lg:hidden" /> : null}
+        {showNav ? (
+          <MainNav
+            className="mt-3 lg:hidden"
+            highlightSupport={highlightSupport}
+          />
+        ) : null}
       </div>
     </header>
   )

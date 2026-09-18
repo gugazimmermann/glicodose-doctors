@@ -115,4 +115,72 @@ describe('ProfilePage', () => {
     expect(updateDoctorProfile).toHaveBeenCalled()
     expect(auth.refreshDoctor).toHaveBeenCalled()
   })
+
+  it('navigates to support page for non-supporter', async () => {
+    const user = userEvent.setup()
+    render(
+      <MemoryRouter initialEntries={['/perfil']}>
+        <Routes>
+          <Route path="/perfil" element={<ProfilePage />} />
+          <Route path="/apoiar" element={<div>Página apoiar</div>} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    expect(
+      screen.getByText(
+        'Assinatura mensal opcional para manter o projeto funcionando.',
+      ),
+    ).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Quero apoiar' }))
+    expect(await screen.findByText('Página apoiar')).toBeInTheDocument()
+  })
+
+  it('shows supporter copy with plan and navigates to plans', async () => {
+    const user = userEvent.setup()
+    Object.assign(
+      auth,
+      createAuthMock({
+        doctor: makeDoctor({
+          supporter_status: 'active',
+          supporter_product_id: 'support_50',
+        }),
+      }),
+    )
+
+    render(
+      <MemoryRouter initialEntries={['/perfil']}>
+        <Routes>
+          <Route path="/perfil" element={<ProfilePage />} />
+          <Route path="/apoiar" element={<div>Página apoiar</div>} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    expect(
+      screen.getByText('Você é apoiador · GlicoDose 50 · R$50/mês.'),
+    ).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Ver planos' }))
+    expect(await screen.findByText('Página apoiar')).toBeInTheDocument()
+  })
+
+  it('shows supporter copy without plan when product is missing', () => {
+    Object.assign(
+      auth,
+      createAuthMock({
+        doctor: makeDoctor({
+          supporter_status: 'active',
+          supporter_product_id: null,
+        }),
+      }),
+    )
+
+    render(
+      <MemoryRouter>
+        <ProfilePage />
+      </MemoryRouter>,
+    )
+
+    expect(screen.getByText('Você é apoiador.')).toBeInTheDocument()
+  })
 })

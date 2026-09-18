@@ -1,0 +1,12 @@
+# Supabase Edge Functions for the doctor portal (Stripe support).
+# https://supabase.com/docs/guides/functions
+
+[functions.create-doctor-checkout]
+verify_jwt = true
+
+[functions.create-doctor-portal]
+verify_jwt = true
+
+# Authenticated via Stripe-Signature, not JWT.
+[functions.stripe-doctor-webhook]
+verify_jwt = false
