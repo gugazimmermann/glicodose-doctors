@@ -1,10 +1,23 @@
 import type { Entry, Profile } from '../types/database'
+import { parseEntryRecommendation } from './entryDetail'
+
+/** Clinical hypo / in-range / hyper thresholds (mg/dL). */
+export const CLINICAL_LOW = 70
+export const CLINICAL_HIGH = 180
 
 export type HistoryStats = {
   count: number
   avgGlucose: number | null
   minGlucose: number | null
   maxGlucose: number | null
+  glucoseSd: number | null
+  glucoseCvPercent: number | null
+  inRange70_180Percent: number | null
+  inRange70_180Count: number
+  hypoPercent: number | null
+  hypoCount: number
+  hyperPercent: number | null
+  hyperCount: number
   inTargetPercent: number | null
   inTargetCount: number
   totalAppliedU: number
@@ -18,6 +31,7 @@ export type HistoryStats = {
   avgCarbsG: number | null
   carbsCount: number
   dayTargetMgdl: number | null
+  nightTargetMgdl: number | null
 }
 
 /** Readings within ±20% of the day/night target for that timestamp. */
@@ -30,6 +44,14 @@ type TargetProfile = Pick<
   | 'night_start_minute'
   | 'night_end_minute'
 >
+
+export type GlucoseZone = 'hypo' | 'inRange' | 'hyper'
+
+export function glucoseZone(glucose: number): GlucoseZone {
+  if (glucose < CLINICAL_LOW) return 'hypo'
+  if (glucose > CLINICAL_HIGH) return 'hyper'
+  return 'inRange'
+}
 
 /** Night window may cross midnight (e.g. 20:00–05:59). */
 export function isNightWindow(
@@ -73,16 +95,46 @@ export function resolveTargetMgdl(
   return night ? nightTarget : dayTarget
 }
 
-function carbsFromEntry(entry: Entry): number | null {
-  const raw = entry.gpt_raw_response
-  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
-  const carbs = (raw as Record<string, unknown>).carboidratos_g
-  if (typeof carbs === 'number' && Number.isFinite(carbs)) return carbs
-  if (typeof carbs === 'string') {
-    const n = Number(carbs.replace(',', '.'))
-    return Number.isFinite(n) ? n : null
+export function isInTarget(
+  glucose: number,
+  target: number,
+  tolerance = TARGET_TOLERANCE,
+): boolean {
+  const lo = target * (1 - tolerance)
+  const hi = target * (1 + tolerance)
+  return glucose >= lo && glucose <= hi
+}
+
+/** CSS text color for a glucose reading relative to target (±20%). */
+export function glucoseToneClass(
+  glucose: number,
+  target: number | null | undefined,
+): string {
+  if (glucose < 70) return 'text-danger'
+  if (target != null && target > 0) {
+    if (isInTarget(glucose, target)) return 'text-ok'
+    const high = target * (1 + TARGET_TOLERANCE)
+    if (glucose > high * 1.15) return 'text-danger'
+    return 'text-warning'
   }
-  return null
+  if (glucose > 180) return 'text-danger'
+  if (glucose > 140) return 'text-warning'
+  return 'text-ink'
+}
+
+function carbsFromEntry(entry: Entry): number | null {
+  return parseEntryRecommendation(entry).carboidratosG
+}
+
+function sampleSd(values: number[]): number | null {
+  if (values.length < 2) return null
+  const mean = values.reduce((a, b) => a + b, 0) / values.length
+  let sumSq = 0
+  for (const v of values) {
+    const d = v - mean
+    sumSq += d * d
+  }
+  return Math.sqrt(sumSq / (values.length - 1))
 }
 
 export function historyStatsFromEntries(
@@ -90,6 +142,8 @@ export function historyStatsFromEntries(
   profile: TargetProfile | null,
 ): HistoryStats {
   const dayTargetMgdl = profile?.target_glucose_mgdl ?? null
+  const nightTargetMgdl =
+    profile?.target_night_mgdl ?? dayTargetMgdl
 
   if (entries.length === 0) {
     return {
@@ -97,6 +151,14 @@ export function historyStatsFromEntries(
       avgGlucose: null,
       minGlucose: null,
       maxGlucose: null,
+      glucoseSd: null,
+      glucoseCvPercent: null,
+      inRange70_180Percent: null,
+      inRange70_180Count: 0,
+      hypoPercent: null,
+      hypoCount: 0,
+      hyperPercent: null,
+      hyperCount: 0,
       inTargetPercent: null,
       inTargetCount: 0,
       totalAppliedU: 0,
@@ -109,6 +171,7 @@ export function historyStatsFromEntries(
       avgCarbsG: null,
       carbsCount: 0,
       dayTargetMgdl,
+      nightTargetMgdl,
     }
   }
 
@@ -116,6 +179,9 @@ export function historyStatsFromEntries(
   let minG = entries[0].glucose_mgdl
   let maxG = entries[0].glucose_mgdl
   let inTarget = 0
+  let inRange = 0
+  let hypo = 0
+  let hyper = 0
 
   let appliedSum = 0
   let appliedN = 0
@@ -126,17 +192,23 @@ export function historyStatsFromEntries(
   let carbsSum = 0
   let carbsN = 0
 
+  const glucoseValues: number[] = []
+
   for (const e of entries) {
     const g = e.glucose_mgdl
+    glucoseValues.push(g)
     glucoseSum += g
     if (g < minG) minG = g
     if (g > maxG) maxG = g
 
+    const zone = glucoseZone(g)
+    if (zone === 'hypo') hypo++
+    else if (zone === 'hyper') hyper++
+    else inRange++
+
     if (profile) {
       const target = resolveTargetMgdl(profile, e.recorded_at)
-      const lo = target * (1 - TARGET_TOLERANCE)
-      const hi = target * (1 + TARGET_TOLERANCE)
-      if (g >= lo && g <= hi) inTarget++
+      if (isInTarget(g, target)) inTarget++
     }
 
     if (e.applied_insulin != null) {
@@ -160,11 +232,24 @@ export function historyStatsFromEntries(
   }
 
   const n = entries.length
+  const avgGlucose = glucoseSum / n
+  const sd = sampleSd(glucoseValues)
+  const cv =
+    sd != null && avgGlucose > 0 ? (sd / avgGlucose) * 100 : null
+
   return {
     count: n,
-    avgGlucose: glucoseSum / n,
+    avgGlucose,
     minGlucose: minG,
     maxGlucose: maxG,
+    glucoseSd: sd,
+    glucoseCvPercent: cv,
+    inRange70_180Percent: (inRange / n) * 100,
+    inRange70_180Count: inRange,
+    hypoPercent: (hypo / n) * 100,
+    hypoCount: hypo,
+    hyperPercent: (hyper / n) * 100,
+    hyperCount: hyper,
     inTargetPercent: profile == null ? null : (inTarget / n) * 100,
     inTargetCount: inTarget,
     totalAppliedU: appliedSum,
@@ -177,5 +262,6 @@ export function historyStatsFromEntries(
     avgCarbsG: carbsN === 0 ? null : carbsSum / carbsN,
     carbsCount: carbsN,
     dayTargetMgdl,
+    nightTargetMgdl,
   }
 }

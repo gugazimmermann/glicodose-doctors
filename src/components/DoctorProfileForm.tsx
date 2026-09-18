@@ -1,14 +1,16 @@
 import { useState, type FormEvent } from 'react'
 import type { Doctor, DoctorProfileFields } from '../types/database'
+import { useAutoClear } from '../hooks/useAutoClear'
+import { Alert } from './ui/Alert'
+import { Button } from './ui/Button'
+import { Card } from './ui/Card'
+import { Input, Label, Select } from './ui/Input'
 
 const BRAZIL_UFS = [
   'AC', 'AL', 'AP', 'AM', 'BA', 'CE', 'DF', 'ES', 'GO', 'MA',
   'MG', 'MS', 'MT', 'PA', 'PB', 'PE', 'PI', 'PR', 'RJ', 'RN',
   'RO', 'RR', 'RS', 'SC', 'SE', 'SP', 'TO',
 ] as const
-
-const inputClass =
-  'w-full rounded-xl border border-line bg-white px-3.5 py-2.5 text-sm outline-none transition focus:border-brand focus:ring-2 focus:ring-brand/20'
 
 /** Brazilian phone: (11) 98888-8888 or (11) 3333-3333 */
 function formatPhoneMask(value: string): string {
@@ -81,6 +83,8 @@ export function DoctorProfileForm({
   const [success, setSuccess] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
 
+  useAutoClear(success, () => setSuccess(null), 5000)
+
   function setField<K extends keyof DoctorProfileFields>(
     key: K,
     value: DoctorProfileFields[K],
@@ -125,227 +129,209 @@ export function DoctorProfileForm({
   }
 
   return (
-    <form
-      onSubmit={handleSubmit}
-      className="space-y-6 rounded-2xl border border-line bg-card p-5 shadow-sm sm:p-6"
-    >
-      <fieldset className="space-y-4">
-        <legend className="text-sm font-semibold uppercase tracking-wide text-muted">
-          Dados profissionais
-        </legend>
-        <div className="grid gap-4 sm:grid-cols-3">
-          <label className="block sm:col-span-2">
-            <span className="mb-1.5 block text-sm font-medium text-ink">CRM</span>
-            <input
-              type="text"
-              value={fields.crm}
-              onChange={(e) =>
-                setField('crm', e.target.value.replace(/\D/g, '').slice(0, 10))
-              }
-              className={inputClass}
-              inputMode="numeric"
-              autoComplete="off"
-              required
-            />
-          </label>
-          <label className="block">
-            <span className="mb-1.5 block text-sm font-medium text-ink">
-              UF do CRM
-            </span>
-            <select
-              value={fields.crm_uf}
-              onChange={(e) => setField('crm_uf', e.target.value)}
-              className={inputClass}
-              required
-            >
-              <option value="">Selecione</option>
-              {BRAZIL_UFS.map((uf) => (
-                <option key={uf} value={uf}>
-                  {uf}
-                </option>
-              ))}
-            </select>
-          </label>
-        </div>
-        <div className="grid gap-4 sm:grid-cols-2">
-          <label className="block">
-            <span className="mb-1.5 block text-sm font-medium text-ink">
-              RQE <span className="font-normal text-muted">(opcional)</span>
-            </span>
-            <input
-              type="text"
-              value={fields.rqe}
-              onChange={(e) => setField('rqe', e.target.value.slice(0, 20))}
-              className={inputClass}
-              autoComplete="off"
-            />
-          </label>
-          <label className="block">
-            <span className="mb-1.5 block text-sm font-medium text-ink">
-              Especialidade
-            </span>
-            <input
-              type="text"
-              value={fields.specialty}
-              onChange={(e) => setField('specialty', e.target.value)}
-              className={inputClass}
-              required
-            />
-          </label>
-        </div>
-        <div className="grid gap-4 sm:grid-cols-2">
-          <label className="block">
-            <span className="mb-1.5 block text-sm font-medium text-ink">
-              Telefone / WhatsApp
-            </span>
-            <input
-              type="tel"
-              value={fields.phone}
-              onChange={(e) => setField('phone', formatPhoneMask(e.target.value))}
-              placeholder="(11) 98888-8888"
-              className={inputClass}
-              inputMode="numeric"
-              autoComplete="tel-national"
-              required
-            />
-          </label>
-          <label className="block">
-            <span className="mb-1.5 block text-sm font-medium text-ink">
-              Consultório / clínica
-            </span>
-            <input
-              type="text"
-              value={fields.clinic_name}
-              onChange={(e) => setField('clinic_name', e.target.value)}
-              className={inputClass}
-              required
-            />
-          </label>
-        </div>
-      </fieldset>
+    <form onSubmit={handleSubmit} className="min-w-0 max-w-full space-y-6">
+      <Card className="min-w-0 space-y-5">
+        <fieldset className="min-w-0 space-y-4">
+          <legend className="text-sm font-semibold uppercase tracking-wide text-muted">
+            Dados profissionais
+          </legend>
+          <div className="grid min-w-0 gap-4 sm:grid-cols-3">
+            <div className="min-w-0 sm:col-span-2">
+              <Label htmlFor="crm">CRM</Label>
+              <Input
+                id="crm"
+                type="text"
+                value={fields.crm}
+                onChange={(e) =>
+                  setField('crm', e.target.value.replace(/\D/g, '').slice(0, 10))
+                }
+                inputMode="numeric"
+                autoComplete="off"
+                required
+              />
+            </div>
+            <div className="min-w-0">
+              <Label htmlFor="crm_uf">UF do CRM</Label>
+              <Select
+                id="crm_uf"
+                value={fields.crm_uf}
+                onChange={(e) => setField('crm_uf', e.target.value)}
+                required
+              >
+                <option value="">Selecione</option>
+                {BRAZIL_UFS.map((uf) => (
+                  <option key={uf} value={uf}>
+                    {uf}
+                  </option>
+                ))}
+              </Select>
+            </div>
+          </div>
+          <div className="grid min-w-0 gap-4 sm:grid-cols-2">
+            <div className="min-w-0">
+              <Label htmlFor="rqe" hint="opcional">
+                RQE
+              </Label>
+              <Input
+                id="rqe"
+                type="text"
+                value={fields.rqe}
+                onChange={(e) => setField('rqe', e.target.value.slice(0, 20))}
+                autoComplete="off"
+              />
+            </div>
+            <div className="min-w-0">
+              <Label htmlFor="specialty">Especialidade</Label>
+              <Input
+                id="specialty"
+                type="text"
+                value={fields.specialty}
+                onChange={(e) => setField('specialty', e.target.value)}
+                required
+              />
+            </div>
+          </div>
+          <div className="grid min-w-0 gap-4 sm:grid-cols-2">
+            <div className="min-w-0">
+              <Label htmlFor="phone">Telefone / WhatsApp</Label>
+              <Input
+                id="phone"
+                type="tel"
+                value={fields.phone}
+                onChange={(e) => setField('phone', formatPhoneMask(e.target.value))}
+                placeholder="(11) 98888-8888"
+                inputMode="numeric"
+                autoComplete="tel-national"
+                required
+              />
+            </div>
+            <div className="min-w-0">
+              <Label htmlFor="clinic_name">Consultório / clínica</Label>
+              <Input
+                id="clinic_name"
+                type="text"
+                value={fields.clinic_name}
+                onChange={(e) => setField('clinic_name', e.target.value)}
+                required
+              />
+            </div>
+          </div>
+        </fieldset>
+      </Card>
 
-      <fieldset className="space-y-4">
-        <legend className="text-sm font-semibold uppercase tracking-wide text-muted">
-          Endereço do consultório
-        </legend>
-        <div className="grid gap-4 sm:grid-cols-3">
-          <label className="block">
-            <span className="mb-1.5 block text-sm font-medium text-ink">CEP</span>
-            <input
-              type="text"
-              value={fields.address_cep}
-              onChange={(e) =>
-                setField(
-                  'address_cep',
-                  e.target.value.replace(/\D/g, '').slice(0, 8),
-                )
-              }
-              className={inputClass}
-              inputMode="numeric"
-              required
-            />
-          </label>
-          <label className="block sm:col-span-2">
-            <span className="mb-1.5 block text-sm font-medium text-ink">
-              Logradouro
-            </span>
-            <input
-              type="text"
-              value={fields.address_street}
-              onChange={(e) => setField('address_street', e.target.value)}
-              className={inputClass}
-              required
-            />
-          </label>
-        </div>
-        <div className="grid gap-4 sm:grid-cols-3">
-          <label className="block">
-            <span className="mb-1.5 block text-sm font-medium text-ink">
-              Número
-            </span>
-            <input
-              type="text"
-              value={fields.address_number}
-              onChange={(e) => setField('address_number', e.target.value)}
-              className={inputClass}
-              required
-            />
-          </label>
-          <label className="block sm:col-span-2">
-            <span className="mb-1.5 block text-sm font-medium text-ink">
-              Complemento{' '}
-              <span className="font-normal text-muted">(opcional)</span>
-            </span>
-            <input
-              type="text"
-              value={fields.address_complement}
-              onChange={(e) => setField('address_complement', e.target.value)}
-              className={inputClass}
-            />
-          </label>
-        </div>
-        <div className="grid gap-4 sm:grid-cols-3">
-          <label className="block">
-            <span className="mb-1.5 block text-sm font-medium text-ink">
-              Bairro
-            </span>
-            <input
-              type="text"
-              value={fields.address_neighborhood}
-              onChange={(e) => setField('address_neighborhood', e.target.value)}
-              className={inputClass}
-              required
-            />
-          </label>
-          <label className="block">
-            <span className="mb-1.5 block text-sm font-medium text-ink">
-              Cidade
-            </span>
-            <input
-              type="text"
-              value={fields.address_city}
-              onChange={(e) => setField('address_city', e.target.value)}
-              className={inputClass}
-              required
-            />
-          </label>
-          <label className="block">
-            <span className="mb-1.5 block text-sm font-medium text-ink">UF</span>
-            <select
-              value={fields.address_state}
-              onChange={(e) => setField('address_state', e.target.value)}
-              className={inputClass}
-              required
-            >
-              <option value="">Selecione</option>
-              {BRAZIL_UFS.map((uf) => (
-                <option key={uf} value={uf}>
-                  {uf}
-                </option>
-              ))}
-            </select>
-          </label>
-        </div>
-      </fieldset>
+      <Card className="min-w-0 space-y-5">
+        <fieldset className="min-w-0 space-y-4">
+          <legend className="text-sm font-semibold uppercase tracking-wide text-muted">
+            Endereço do consultório
+          </legend>
+          <div className="grid min-w-0 gap-4 sm:grid-cols-3">
+            <div className="min-w-0">
+              <Label htmlFor="address_cep">CEP</Label>
+              <Input
+                id="address_cep"
+                type="text"
+                value={fields.address_cep}
+                onChange={(e) =>
+                  setField(
+                    'address_cep',
+                    e.target.value.replace(/\D/g, '').slice(0, 8),
+                  )
+                }
+                inputMode="numeric"
+                required
+              />
+            </div>
+            <div className="min-w-0 sm:col-span-2">
+              <Label htmlFor="address_street">Logradouro</Label>
+              <Input
+                id="address_street"
+                type="text"
+                value={fields.address_street}
+                onChange={(e) => setField('address_street', e.target.value)}
+                required
+              />
+            </div>
+          </div>
+          <div className="grid min-w-0 gap-4 sm:grid-cols-3">
+            <div className="min-w-0">
+              <Label htmlFor="address_number">Número</Label>
+              <Input
+                id="address_number"
+                type="text"
+                value={fields.address_number}
+                onChange={(e) => setField('address_number', e.target.value)}
+                required
+              />
+            </div>
+            <div className="min-w-0 sm:col-span-2">
+              <Label htmlFor="address_complement" hint="opcional">
+                Complemento
+              </Label>
+              <Input
+                id="address_complement"
+                type="text"
+                value={fields.address_complement}
+                onChange={(e) => setField('address_complement', e.target.value)}
+              />
+            </div>
+          </div>
+          <div className="grid min-w-0 gap-4 sm:grid-cols-3">
+            <div className="min-w-0">
+              <Label htmlFor="address_neighborhood">Bairro</Label>
+              <Input
+                id="address_neighborhood"
+                type="text"
+                value={fields.address_neighborhood}
+                onChange={(e) => setField('address_neighborhood', e.target.value)}
+                required
+              />
+            </div>
+            <div className="min-w-0">
+              <Label htmlFor="address_city">Cidade</Label>
+              <Input
+                id="address_city"
+                type="text"
+                value={fields.address_city}
+                onChange={(e) => setField('address_city', e.target.value)}
+                required
+              />
+            </div>
+            <div className="min-w-0">
+              <Label htmlFor="address_state">UF</Label>
+              <Select
+                id="address_state"
+                value={fields.address_state}
+                onChange={(e) => setField('address_state', e.target.value)}
+                required
+              >
+                <option value="">Selecione</option>
+                {BRAZIL_UFS.map((uf) => (
+                  <option key={uf} value={uf}>
+                    {uf}
+                  </option>
+                ))}
+              </Select>
+            </div>
+          </div>
+        </fieldset>
+      </Card>
 
       {error && (
-        <p className="rounded-lg bg-danger-soft px-3 py-2 text-sm text-danger">
+        <Alert variant="error" onDismiss={() => setError(null)}>
           {error}
-        </p>
+        </Alert>
       )}
       {success && (
-        <p className="rounded-lg bg-brand-soft px-3 py-2 text-sm text-brand-dark">
+        <Alert variant="success" onDismiss={() => setSuccess(null)}>
           {success}
-        </p>
+        </Alert>
       )}
 
-      <button
-        type="submit"
-        disabled={saving}
-        className="rounded-xl bg-brand px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-brand-dark disabled:opacity-60"
-      >
-        {saving ? 'Salvando…' : submitLabel}
-      </button>
+      <div className="sticky bottom-0 z-10 w-full max-w-full border-t border-line/80 bg-surface/95 py-3 backdrop-blur-md lg:static lg:border-0 lg:bg-transparent lg:p-0 lg:backdrop-blur-none">
+        <Button type="submit" disabled={saving} className="w-full sm:w-auto">
+          {saving ? 'Salvando…' : submitLabel}
+        </Button>
+      </div>
     </form>
   )
 }

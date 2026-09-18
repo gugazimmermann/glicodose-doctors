@@ -1,13 +1,27 @@
-import { useCallback, useEffect, useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useId, useState, type FormEvent } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { EntryDetailModal } from '../components/EntryDetailModal'
 import { PatientCharts } from '../components/PatientCharts'
+import { Alert } from '../components/ui/Alert'
+import { Button } from '../components/ui/Button'
+import { Card } from '../components/ui/Card'
+import { EmptyState } from '../components/ui/EmptyState'
+import { Input, Label, Select } from '../components/ui/Input'
+import { PageHeader } from '../components/ui/PageHeader'
+import { SegmentedControl } from '../components/ui/SegmentedControl'
+import { Spinner } from '../components/ui/Spinner'
+import { useAutoClear } from '../hooks/useAutoClear'
+import { fetchPatientEntries } from '../lib/entriesApi'
 import { supabase } from '../lib/supabase'
 import {
   diabetesTypeLabel,
   formatBrazilDateTime,
   formatDose,
 } from '../lib/format'
+import {
+  glucoseToneClass,
+  resolveTargetMgdl,
+} from '../lib/historyStats'
 import type { Entry, Profile } from '../types/database'
 
 type PrescriptionForm = {
@@ -48,11 +62,9 @@ function parsePositiveNumber(value: string, label: string): number {
   return n
 }
 
-const inputClass =
-  'mt-1.5 w-full rounded-xl border border-line bg-white px-3 py-2 text-sm font-semibold text-ink outline-none transition focus:border-brand focus:ring-2 focus:ring-brand/20'
-
 export function PatientDetailPage() {
   const { patientId } = useParams<{ patientId: string }>()
+  const baseId = useId()
   const [profile, setProfile] = useState<Profile | null>(null)
   const [form, setForm] = useState<PrescriptionForm | null>(null)
   const [entries, setEntries] = useState<Entry[]>([])
@@ -75,25 +87,20 @@ export function PatientDetailPage() {
 
   const loadHistory = useCallback(
     async (page: number, sort: HistorySort) => {
-      if (!patientId) return
       setHistoryLoading(true)
-      const from = page * HISTORY_PAGE_SIZE
-      const to = from + HISTORY_PAGE_SIZE - 1
-
-      const { data, error: entriesError, count } = await supabase
-        .from('entries')
-        .select('*', { count: 'exact' })
-        .eq('user_id', patientId)
-        .order('recorded_at', { ascending: sort === 'oldest' })
-        .range(from, to)
-
-      if (entriesError) {
-        setError(entriesError.message)
+      try {
+        const { entries: rows, total } = await fetchPatientEntries(patientId!, {
+          mode: 'page',
+          page,
+          pageSize: HISTORY_PAGE_SIZE,
+          sort,
+        })
+        setEntries(rows)
+        setEntriesTotal(total ?? 0)
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Erro ao carregar histórico.')
         setEntries([])
         setEntriesTotal(0)
-      } else {
-        setEntries((data ?? []) as Entry[])
-        setEntriesTotal(count ?? 0)
       }
       setHistoryLoading(false)
     },
@@ -149,9 +156,13 @@ export function PatientDetailPage() {
     void loadHistory(historyPage, historySort)
   }, [patientId, profile, historyPage, historySort, loadHistory])
 
+  const clearSaveSuccess = () => setSaveSuccess(null)
+  useAutoClear(saveSuccess, clearSaveSuccess, 5000)
+
   async function onSavePrescription(e: FormEvent) {
     e.preventDefault()
-    if (!profile || !form) return
+    const currentProfile = profile!
+    const currentForm = form!
 
     setSaveError(null)
     setSaveSuccess(null)
@@ -161,16 +172,16 @@ export function PatientDetailPage() {
     let isf: number
     let ic: number
     try {
-      targetDay = parsePositiveNumber(form.target_glucose_mgdl, 'Meta dia')
-      targetNight = parsePositiveNumber(form.target_night_mgdl, 'Meta noite')
-      isf = parsePositiveNumber(form.isf_mgdl_per_u, 'FSI')
-      ic = parsePositiveNumber(form.ic_ratio, 'I:C')
+      targetDay = parsePositiveNumber(currentForm.target_glucose_mgdl, 'Meta dia')
+      targetNight = parsePositiveNumber(currentForm.target_night_mgdl, 'Meta noite')
+      isf = parsePositiveNumber(currentForm.isf_mgdl_per_u, 'FSI')
+      ic = parsePositiveNumber(currentForm.ic_ratio, 'I:C')
     } catch (err) {
       setSaveError(err instanceof Error ? err.message : 'Dados inválidos.')
       return
     }
 
-    const insulinName = form.rapid_insulin_name.trim()
+    const insulinName = currentForm.rapid_insulin_name.trim()
     if (!insulinName) {
       setSaveError('Informe o nome da insulina rápida.')
       return
@@ -188,7 +199,7 @@ export function PatientDetailPage() {
           rapid_insulin_name: insulinName,
           updated_at: new Date().toISOString(),
         })
-        .eq('id', profile.id)
+        .eq('id', currentProfile.id)
         .select('*')
         .maybeSingle()
 
@@ -209,7 +220,7 @@ export function PatientDetailPage() {
   }
 
   if (loading) {
-    return <p className="text-sm text-muted">Carregando histórico…</p>
+    return <Spinner label="Carregando paciente…" />
   }
 
   if (error || !profile || !form) {
@@ -221,256 +232,266 @@ export function PatientDetailPage() {
         >
           ← Voltar
         </Link>
-        <p className="rounded-lg bg-danger-soft px-3 py-2 text-sm text-danger">
-          {error ?? 'Paciente não encontrado.'}
-        </p>
+        <Alert variant="error">{error ?? 'Paciente não encontrado.'}</Alert>
       </div>
     )
   }
 
+  const tabs = [
+    { id: 'prescription' as const, label: 'Prescrição', panelId: `${baseId}-prescription` },
+    {
+      id: 'history' as const,
+      label: `Histórico (${entriesTotal})`,
+      panelId: `${baseId}-history`,
+    },
+    { id: 'charts' as const, label: 'Gráficos', panelId: `${baseId}-charts` },
+  ]
+
   return (
-    <div className="space-y-8">
-      <div>
+    <div className="min-w-0 max-w-full space-y-6 sm:space-y-8">
+      <PageHeader
+        title={profile.full_name?.trim() || 'Paciente sem nome'}
+        description={`${diabetesTypeLabel(profile.diabetes_type)} · código ${profile.share_code}`}
+      >
         <Link
           to="/"
-          className="text-sm font-medium text-brand no-underline hover:underline"
+          className="mb-2 inline-block text-sm font-medium text-brand no-underline hover:underline"
         >
           ← Pacientes
         </Link>
-        <h1 className="mt-2 text-2xl font-bold tracking-tight text-ink">
-          {profile.full_name?.trim() || 'Paciente sem nome'}
-        </h1>
-        <p className="mt-1 text-sm text-muted">
-          Código{' '}
-          <span className="font-mono font-semibold tracking-wider text-ink">
-            {profile.share_code}
-          </span>
-          {' · '}
-          {diabetesTypeLabel(profile.diabetes_type)}
-        </p>
-      </div>
+      </PageHeader>
 
-      <div>
-        <div
-          role="tablist"
-          aria-label="Paciente"
-          className="flex flex-wrap gap-1 border-b border-line"
-        >
-          {(
-            [
-              { id: 'prescription', label: 'Prescrição' },
-              { id: 'history', label: `Histórico (${entriesTotal})` },
-              { id: 'charts', label: 'Gráficos' },
-            ] as const
-          ).map((tab) => {
-            const selected = detailTab === tab.id
-            return (
-              <button
-                key={tab.id}
-                type="button"
-                role="tab"
-                aria-selected={selected}
-                onClick={() => setDetailTab(tab.id)}
-                className={`-mb-px border-b-2 px-4 py-2.5 text-sm font-semibold transition ${
-                  selected
-                    ? 'border-brand text-brand-dark'
-                    : 'border-transparent text-muted hover:text-ink'
-                }`}
-              >
-                {tab.label}
-              </button>
-            )
-          })}
-        </div>
+      <div className="min-w-0">
+        <SegmentedControl
+          variant="underline"
+          ariaLabel="Paciente"
+          value={detailTab}
+          onChange={setDetailTab}
+          items={tabs.map((tab) => ({ value: tab.id, label: tab.label }))}
+          getTabId={(id) => `${baseId}-tab-${id}`}
+          getPanelId={(id) => tabs.find((t) => t.id === id)?.panelId ?? `${baseId}-${id}`}
+        />
 
         {detailTab === 'prescription' ? (
           <form
-            onSubmit={onSavePrescription}
-            className="mt-4 space-y-4 rounded-2xl border border-line bg-card p-5 shadow-sm sm:p-6"
+            id={`${baseId}-prescription`}
             role="tabpanel"
+            aria-labelledby={`${baseId}-tab-prescription`}
+            onSubmit={onSavePrescription}
+            className="mt-4"
           >
-            <div>
-              <h2 className="sr-only">Prescrição</h2>
-              <p className="text-sm text-muted">
-                Altere os parâmetros usados no cálculo de insulina do paciente.
-              </p>
-            </div>
+            <Card className="space-y-5">
+              <div>
+                <h2 className="text-base font-semibold text-ink">Prescrição</h2>
+                <p className="mt-1 text-sm text-muted">
+                  Parâmetros usados no cálculo de insulina do paciente.
+                </p>
+              </div>
 
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
-              <label className="block">
-                <span className="text-xs font-semibold uppercase tracking-wide text-muted">
-                  Meta dia (mg/dL)
-                </span>
-                <input
-                  type="number"
-                  min={1}
-                  step="any"
-                  value={form.target_glucose_mgdl}
-                  onChange={(e) =>
-                    setForm((f) =>
-                      f ? { ...f, target_glucose_mgdl: e.target.value } : f,
-                    )
-                  }
-                  className={inputClass}
-                  required
-                />
-              </label>
-              <label className="block">
-                <span className="text-xs font-semibold uppercase tracking-wide text-muted">
-                  Meta noite (mg/dL)
-                </span>
-                <input
-                  type="number"
-                  min={1}
-                  step="any"
-                  value={form.target_night_mgdl}
-                  onChange={(e) =>
-                    setForm((f) =>
-                      f ? { ...f, target_night_mgdl: e.target.value } : f,
-                    )
-                  }
-                  className={inputClass}
-                  required
-                />
-              </label>
-              <label className="block">
-                <span className="text-xs font-semibold uppercase tracking-wide text-muted">
-                  FSI (mg/dL/U)
-                </span>
-                <input
-                  type="number"
-                  min={1}
-                  step="any"
-                  value={form.isf_mgdl_per_u}
-                  onChange={(e) =>
-                    setForm((f) =>
-                      f ? { ...f, isf_mgdl_per_u: e.target.value } : f,
-                    )
-                  }
-                  className={inputClass}
-                  required
-                />
-              </label>
-              <label className="block">
-                <span className="text-xs font-semibold uppercase tracking-wide text-muted">
-                  I:C (g por 1 U)
-                </span>
-                <input
-                  type="number"
-                  min={1}
-                  step="any"
-                  value={form.ic_ratio}
-                  onChange={(e) =>
-                    setForm((f) =>
-                      f ? { ...f, ic_ratio: e.target.value } : f,
-                    )
-                  }
-                  className={inputClass}
-                  required
-                />
-              </label>
-              <label className="block">
-                <span className="text-xs font-semibold uppercase tracking-wide text-muted">
-                  Insulina rápida
-                </span>
-                <input
-                  type="text"
-                  value={form.rapid_insulin_name}
-                  onChange={(e) =>
-                    setForm((f) =>
-                      f ? { ...f, rapid_insulin_name: e.target.value } : f,
-                    )
-                  }
-                  className={inputClass}
-                  required
-                />
-              </label>
-            </div>
+              <div className="grid min-w-0 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                <div className="min-w-0">
+                  <Label
+                    htmlFor={`${baseId}-target-day`}
+                    density="stacked"
+                    subtitle="mg/dL"
+                  >
+                    Meta dia
+                  </Label>
+                  <Input
+                    id={`${baseId}-target-day`}
+                    type="number"
+                    min={1}
+                    step="any"
+                    value={form.target_glucose_mgdl}
+                    onChange={(e) =>
+                      setForm((f) =>
+                        f ? { ...f, target_glucose_mgdl: e.target.value } : f,
+                      )
+                    }
+                    className="mt-1.5 font-semibold"
+                    required
+                  />
+                </div>
+                <div className="min-w-0">
+                  <Label
+                    htmlFor={`${baseId}-target-night`}
+                    density="stacked"
+                    subtitle="mg/dL"
+                  >
+                    Meta noite
+                  </Label>
+                  <Input
+                    id={`${baseId}-target-night`}
+                    type="number"
+                    min={1}
+                    step="any"
+                    value={form.target_night_mgdl}
+                    onChange={(e) =>
+                      setForm((f) =>
+                        f ? { ...f, target_night_mgdl: e.target.value } : f,
+                      )
+                    }
+                    className="mt-1.5 font-semibold"
+                    required
+                  />
+                </div>
+                <div className="min-w-0">
+                  <Label
+                    htmlFor={`${baseId}-isf`}
+                    density="stacked"
+                    subtitle="mg/dL por 1 U"
+                  >
+                    FSI
+                  </Label>
+                  <Input
+                    id={`${baseId}-isf`}
+                    type="number"
+                    min={1}
+                    step="any"
+                    value={form.isf_mgdl_per_u}
+                    onChange={(e) =>
+                      setForm((f) =>
+                        f ? { ...f, isf_mgdl_per_u: e.target.value } : f,
+                      )
+                    }
+                    className="mt-1.5 font-semibold"
+                    required
+                  />
+                </div>
+                <div className="min-w-0">
+                  <Label
+                    htmlFor={`${baseId}-ic`}
+                    density="stacked"
+                    subtitle="g de carb por 1 U"
+                  >
+                    I:C
+                  </Label>
+                  <Input
+                    id={`${baseId}-ic`}
+                    type="number"
+                    min={1}
+                    step="any"
+                    value={form.ic_ratio}
+                    onChange={(e) =>
+                      setForm((f) =>
+                        f ? { ...f, ic_ratio: e.target.value } : f,
+                      )
+                    }
+                    className="mt-1.5 font-semibold"
+                    required
+                  />
+                </div>
+                <div className="min-w-0 sm:col-span-2 lg:col-span-2">
+                  <Label
+                    htmlFor={`${baseId}-insulin`}
+                    density="stacked"
+                    subtitle="Nome comercial"
+                  >
+                    Insulina rápida
+                  </Label>
+                  <Input
+                    id={`${baseId}-insulin`}
+                    type="text"
+                    value={form.rapid_insulin_name}
+                    onChange={(e) =>
+                      setForm((f) =>
+                        f ? { ...f, rapid_insulin_name: e.target.value } : f,
+                      )
+                    }
+                    className="mt-1.5 font-semibold"
+                    required
+                  />
+                </div>
+              </div>
 
-            {saveError && (
-              <p className="rounded-lg bg-danger-soft px-3 py-2 text-sm text-danger">
-                {saveError}
-              </p>
-            )}
-            {saveSuccess && (
-              <p className="rounded-lg bg-brand-soft px-3 py-2 text-sm text-brand-dark">
-                {saveSuccess}
-              </p>
-            )}
+              {saveError && (
+                <Alert variant="error" onDismiss={() => setSaveError(null)}>
+                  {saveError}
+                </Alert>
+              )}
+              {saveSuccess && (
+                <Alert variant="success" onDismiss={clearSaveSuccess}>
+                  {saveSuccess}
+                </Alert>
+              )}
 
-            <button
-              type="submit"
-              disabled={saving}
-              className="rounded-xl bg-brand px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-brand-dark disabled:opacity-60"
-            >
-              {saving ? 'Salvando…' : 'Salvar prescrição'}
-            </button>
+              <Button type="submit" disabled={saving}>
+                {saving ? 'Salvando…' : 'Salvar prescrição'}
+              </Button>
+            </Card>
           </form>
         ) : detailTab === 'history' ? (
-          <section className="mt-4" role="tabpanel">
-            <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <section
+            id={`${baseId}-history`}
+            className="mt-4 space-y-4"
+            role="tabpanel"
+            aria-labelledby={`${baseId}-tab-history`}
+          >
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <h2 className="sr-only">Histórico</h2>
               {historyLoading ? (
-                <p className="text-sm text-muted">Atualizando…</p>
+                <Spinner label="Atualizando…" />
               ) : (
-                <span />
+                <span className="text-sm text-muted">
+                  {entriesTotal} registro{entriesTotal === 1 ? '' : 's'}
+                </span>
               )}
               {entriesTotal > 0 && (
                 <label className="flex items-center gap-2 text-sm text-muted">
                   <span className="whitespace-nowrap">Ordenar</span>
-                  <select
+                  <Select
                     value={historySort}
                     onChange={(e) => {
                       setHistorySort(e.target.value as HistorySort)
                       setHistoryPage(0)
                     }}
-                    className="rounded-lg border border-line bg-white px-3 py-1.5 text-sm text-ink outline-none transition focus:border-brand focus:ring-2 focus:ring-brand/20"
+                    className="w-auto py-2"
                   >
                     <option value="newest">Mais recentes</option>
                     <option value="oldest">Mais antigos</option>
-                  </select>
+                  </Select>
                 </label>
               )}
             </div>
 
             {entriesTotal === 0 && !historyLoading ? (
-              <div className="rounded-2xl border border-dashed border-line bg-card/60 px-5 py-10 text-center">
-                <p className="text-sm text-muted">Nenhum registro ainda.</p>
-              </div>
+              <EmptyState muted title="Nenhum registro ainda." />
             ) : (
               <>
-                <ul className="space-y-3 md:hidden">
+                <ul className="space-y-3 lg:hidden">
                   {entries.map((entry) => (
                     <li key={entry.id}>
                       <button
                         type="button"
                         onClick={() => setSelectedEntry(entry)}
-                        className="w-full rounded-2xl border border-line bg-card p-4 text-left shadow-sm transition hover:border-brand/40 hover:bg-brand-soft/20"
+                        className="w-full rounded-2xl border border-line bg-card p-4 text-left shadow-sm transition hover:border-brand/40 hover:bg-brand-softer/40"
                       >
                         <p className="text-xs font-medium text-muted">
                           {formatBrazilDateTime(entry.recorded_at)}
                         </p>
-                        <p className="mt-1 text-lg font-bold text-ink">
+                        <p
+                          className={`mt-1 text-lg font-bold ${glucoseToneClass(entry.glucose_mgdl, resolveTargetMgdl(profile, entry.recorded_at))}`}
+                        >
                           {entry.glucose_mgdl}{' '}
                           <span className="text-sm font-medium text-muted">
                             mg/dL
                           </span>
                         </p>
                         {entry.food_text && (
-                          <p className="mt-2 text-sm text-ink">
+                          <p className="mt-2 line-clamp-2 text-sm text-ink">
                             {entry.food_text}
                           </p>
                         )}
-                        <div className="mt-3 flex gap-4 text-sm">
+                        <div className="mt-3 flex gap-4 text-sm text-muted">
                           <span>
                             Rec:{' '}
-                            <strong>
+                            <strong className="text-ink">
                               {formatDose(entry.recommended_insulin)} U
                             </strong>
                           </span>
                           <span>
                             Apl:{' '}
-                            <strong>
+                            <strong className="text-ink">
                               {formatDose(entry.applied_insulin)} U
                             </strong>
                           </span>
@@ -480,10 +501,10 @@ export function PatientDetailPage() {
                   ))}
                 </ul>
 
-                <div className="hidden overflow-hidden rounded-2xl border border-line bg-card shadow-sm md:block">
+                <Card padded={false} className="hidden overflow-hidden lg:block">
                   <div className="overflow-x-auto">
-                    <table className="w-full min-w-160 text-left text-sm">
-                      <thead className="border-b border-line bg-brand-soft/50 text-xs uppercase tracking-wide text-muted">
+                    <table className="w-full min-w-[36rem] text-left text-sm">
+                      <thead className="border-b border-line bg-brand-softer/80 text-xs uppercase tracking-wide text-muted">
                         <tr>
                           <th className="px-4 py-3 font-semibold">
                             Data / hora
@@ -509,12 +530,14 @@ export function PatientDetailPage() {
                                 setSelectedEntry(entry)
                               }
                             }}
-                            className="cursor-pointer border-b border-line/70 last:border-0 hover:bg-brand-soft/30"
+                            className="cursor-pointer border-b border-line/70 last:border-0 hover:bg-brand-softer/50"
                           >
                             <td className="whitespace-nowrap px-4 py-3 text-muted">
                               {formatBrazilDateTime(entry.recorded_at)}
                             </td>
-                            <td className="px-4 py-3 font-semibold text-ink">
+                            <td
+                              className={`px-4 py-3 font-semibold ${glucoseToneClass(entry.glucose_mgdl, resolveTargetMgdl(profile, entry.recorded_at))}`}
+                            >
                               {entry.glucose_mgdl} mg/dL
                             </td>
                             <td className="max-w-xs truncate px-4 py-3 text-ink">
@@ -534,35 +557,35 @@ export function PatientDetailPage() {
                       </tbody>
                     </table>
                   </div>
-                </div>
+                </Card>
 
                 {entriesTotal > HISTORY_PAGE_SIZE && (
-                  <div className="mt-4 flex flex-col items-center gap-3 sm:flex-row sm:justify-between">
+                  <div className="flex flex-col items-center gap-3 sm:flex-row sm:justify-between">
                     <p className="text-sm text-muted">
                       Página {historyPage + 1} de {totalPages} ·{' '}
                       {HISTORY_PAGE_SIZE} por página
                     </p>
                     <div className="flex gap-2">
-                      <button
-                        type="button"
+                      <Button
+                        variant="secondary"
+                        size="sm"
                         disabled={historyPage <= 0 || historyLoading}
                         onClick={() =>
                           setHistoryPage((p) => Math.max(0, p - 1))
                         }
-                        className="rounded-lg border border-line px-3 py-1.5 text-sm font-medium text-muted transition hover:border-brand hover:text-brand disabled:cursor-not-allowed disabled:opacity-40"
                       >
                         Anterior
-                      </button>
-                      <button
-                        type="button"
+                      </Button>
+                      <Button
+                        variant="secondary"
+                        size="sm"
                         disabled={
                           historyPage + 1 >= totalPages || historyLoading
                         }
                         onClick={() => setHistoryPage((p) => p + 1)}
-                        className="rounded-lg border border-line px-3 py-1.5 text-sm font-medium text-muted transition hover:border-brand hover:text-brand disabled:cursor-not-allowed disabled:opacity-40"
                       >
                         Próxima
-                      </button>
+                      </Button>
                     </div>
                   </div>
                 )}
@@ -570,7 +593,12 @@ export function PatientDetailPage() {
             )}
           </section>
         ) : (
-          <div className="mt-4" role="tabpanel">
+          <div
+            id={`${baseId}-charts`}
+            className="mt-4"
+            role="tabpanel"
+            aria-labelledby={`${baseId}-tab-charts`}
+          >
             <PatientCharts patientId={profile.id} profile={profile} />
           </div>
         )}

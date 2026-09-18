@@ -1,5 +1,5 @@
 import type { Entry } from '../types/database'
-import { formatDose } from './format'
+import { formatDose, formatU } from './format'
 
 export type EntryRecommendation = {
   carboidratosG: number | null
@@ -57,6 +57,4 @@ export function formatMetaLabel(rec: EntryRecommendation): string | null {
   return `Meta aplicada: ${rec.metaMgdl} mg/dL${period}`
 }
 
-export function formatU(value: number | null | undefined): string {
-  return `${formatDose(value)} U`
-}
+export { formatU, formatDose }

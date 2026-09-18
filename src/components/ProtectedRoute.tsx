@@ -1,15 +1,12 @@
 import { Navigate, Outlet } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
+import { FullPageSpinner } from './ui/Spinner'
 
 export function ProtectedRoute() {
   const { session, doctor, loading } = useAuth()
 
   if (loading) {
-    return (
-      <div className="flex min-h-screen items-center justify-center text-muted">
-        Carregando…
-      </div>
-    )
+    return <FullPageSpinner />
   }
 
   if (!session) {

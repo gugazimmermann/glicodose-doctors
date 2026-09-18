@@ -9,6 +9,15 @@ import { supabase } from '../lib/supabase'
 import { formatBrazilDate } from '../lib/format'
 import type { LinkedPatient } from '../types/database'
 import { useAuth } from '../contexts/AuthContext'
+import { BrandLogo } from '../components/BrandLogo'
+import { Alert } from '../components/ui/Alert'
+import { Button } from '../components/ui/Button'
+import { Card } from '../components/ui/Card'
+import { EmptyState } from '../components/ui/EmptyState'
+import { Input, Select } from '../components/ui/Input'
+import { ConfirmDialog } from '../components/ui/Modal'
+import { PageHeader } from '../components/ui/PageHeader'
+import { Skeleton, Spinner } from '../components/ui/Spinner'
 
 type SortMode = 'name' | 'recent'
 
@@ -26,6 +35,7 @@ export function PatientsPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [unlinkingId, setUnlinkingId] = useState<string | null>(null)
+  const [confirmUnlinkId, setConfirmUnlinkId] = useState<string | null>(null)
   const [query, setQuery] = useState('')
   const [sort, setSort] = useState<SortMode>('name')
 
@@ -117,8 +127,9 @@ export function PatientsPage() {
 
   const searchActive = normalizeSearch(query).length > 0
 
-  async function onUnlink(linkId: string) {
-    if (!confirm('Remover este paciente da sua lista?')) return
+  async function confirmUnlink() {
+    const linkId = confirmUnlinkId!
+    setConfirmUnlinkId(null)
     setUnlinkingId(linkId)
     setError(null)
     const { error: delError } = await supabase
@@ -137,19 +148,26 @@ export function PatientsPage() {
     ? `${filteredPatients.length} de ${patients.length}`
     : String(patients.length)
 
+  const confirmPatient = patients.find((p) => p.linkId === confirmUnlinkId)
+
   return (
-    <div className="space-y-8">
-      <div>
-        <h1 className="text-2xl font-bold tracking-tight text-ink">Pacientes</h1>
-        <p className="mt-1 text-sm text-muted">
-          Busque e acompanhe os pacientes vinculados à sua conta.
-        </p>
-      </div>
+    <div className="min-w-0 max-w-full space-y-6 sm:space-y-8">
+      <PageHeader
+        title="Pacientes"
+        description="Busque e acompanhe os pacientes vinculados à sua conta."
+        action={
+          patients.length > 0 ? (
+            <Link to="/vincular" className="no-underline">
+              <Button size="sm">Vincular</Button>
+            </Link>
+          ) : null
+        }
+      />
 
       {error && (
-        <p className="rounded-lg bg-danger-soft px-3 py-2 text-sm text-danger">
+        <Alert variant="error" onDismiss={() => setError(null)}>
           {error}
-        </p>
+        </Alert>
       )}
 
       <section>
@@ -158,32 +176,34 @@ export function PatientsPage() {
         </h2>
 
         {loading ? (
-          <p className="text-sm text-muted">Carregando…</p>
-        ) : patients.length === 0 ? (
-          <div className="rounded-2xl border border-dashed border-line bg-card/60 px-5 py-10 text-center">
-            <p className="text-sm font-medium text-ink">Nenhum paciente ainda</p>
-            <p className="mt-1 text-sm text-muted">
-              Vá em{' '}
-              <Link
-                to="/vincular"
-                className="font-semibold text-brand no-underline hover:text-brand-dark"
-              >
-                Vincular
-              </Link>{' '}
-              e digite o código do paciente no app GlicoDose.
-            </p>
+          <div className="space-y-3">
+            <Spinner />
+            <Skeleton className="h-20 w-full" />
+            <Skeleton className="h-20 w-full" />
           </div>
+        ) : patients.length === 0 ? (
+          <EmptyState
+            className="py-12"
+            icon={<BrandLogo size={56} />}
+            title="Nenhum paciente ainda"
+            description="Vincule um paciente com o código de 6 dígitos do app GlicoDose."
+            action={
+              <Link to="/vincular" className="inline-block no-underline">
+                <Button>Vincular paciente</Button>
+              </Link>
+            }
+          />
         ) : (
           <>
-            <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center">
-              <label className="relative block min-w-0 flex-1">
+            <div className="mb-4 flex min-w-0 flex-col gap-3 lg:flex-row lg:items-center">
+              <label className="relative block min-w-0 w-full flex-1">
                 <span className="sr-only">Buscar paciente</span>
-                <input
+                <Input
                   type="search"
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
                   placeholder="Buscar por nome ou código"
-                  className="w-full rounded-xl border border-line bg-white py-2.5 pl-3.5 pr-10 text-sm outline-none transition focus:border-brand focus:ring-2 focus:ring-brand/20"
+                  className="pr-16"
                   autoComplete="off"
                 />
                 {query && (
@@ -197,66 +217,66 @@ export function PatientsPage() {
                   </button>
                 )}
               </label>
-              <label className="flex shrink-0 items-center gap-2 text-sm text-muted">
-                <span className="whitespace-nowrap">Ordenar</span>
-                <select
+              <label className="flex min-w-0 w-full shrink-0 items-center gap-2 text-sm text-muted lg:w-auto">
+                <span className="shrink-0">Ordenar</span>
+                <Select
                   value={sort}
                   onChange={(e) => setSort(e.target.value as SortMode)}
-                  className="rounded-xl border border-line bg-white px-3 py-2.5 text-sm text-ink outline-none transition focus:border-brand focus:ring-2 focus:ring-brand/20"
+                  className="min-w-0 flex-1 lg:w-auto lg:min-w-40"
                 >
                   <option value="name">Nome (A–Z)</option>
                   <option value="recent">Mais recentes</option>
-                </select>
+                </Select>
               </label>
             </div>
 
             {filteredPatients.length === 0 ? (
-              <div className="rounded-2xl border border-dashed border-line bg-card/60 px-5 py-10 text-center">
-                <p className="text-sm font-medium text-ink">
-                  Nenhum paciente encontrado
-                </p>
-                <p className="mt-1 text-sm text-muted">
-                  Tente outro nome ou código, ou limpe a busca.
-                </p>
-              </div>
+              <EmptyState
+                title="Nenhum paciente encontrado"
+                description="Tente outro nome ou código, ou limpe a busca."
+              />
             ) : (
               <ul className="space-y-3">
                 {filteredPatients.map(({ linkId, linkedAt, patient }) => (
-                  <li
-                    key={linkId}
-                    className="flex flex-col gap-3 rounded-2xl border border-line bg-card p-4 shadow-sm sm:flex-row sm:items-center sm:justify-between sm:p-5"
-                  >
-                    <div>
-                      <Link
-                        to={`/pacientes/${patient.id}`}
-                        className="text-base font-semibold text-ink no-underline hover:text-brand"
-                      >
-                        {patient.full_name?.trim() || 'Paciente sem nome'}
-                      </Link>
-                      <p className="mt-0.5 text-xs text-muted">
-                        Código{' '}
-                        <span className="font-mono font-semibold tracking-wider">
-                          {patient.share_code}
-                        </span>
-                        {' · '}vinculado em {formatBrazilDate(linkedAt)}
-                      </p>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <Link
-                        to={`/pacientes/${patient.id}`}
-                        className="rounded-lg bg-brand-soft px-3 py-1.5 text-sm font-semibold text-brand-dark no-underline transition hover:bg-brand hover:text-white"
-                      >
-                        Ver histórico
-                      </Link>
-                      <button
-                        type="button"
-                        onClick={() => void onUnlink(linkId)}
-                        disabled={unlinkingId === linkId}
-                        className="rounded-lg border border-line px-3 py-1.5 text-sm font-medium text-muted transition hover:border-danger hover:text-danger disabled:opacity-60"
-                      >
-                        {unlinkingId === linkId ? '…' : 'Remover'}
-                      </button>
-                    </div>
+                  <li key={linkId}>
+                    <Card
+                      padded={false}
+                      className="flex min-w-0 flex-col gap-4 p-4 lg:flex-row lg:items-center lg:justify-between lg:p-5"
+                    >
+                      <div className="flex min-w-0 items-start gap-3">
+                        <div className="min-w-0 flex-1">
+                          <Link
+                            to={`/pacientes/${patient.id}`}
+                            className="block truncate text-base font-semibold text-ink no-underline hover:text-brand"
+                          >
+                            {patient.full_name?.trim() || 'Paciente sem nome'}
+                          </Link>
+                          <p className="mt-0.5 break-words text-xs text-muted">
+                            Código{' '}
+                            <span className="font-mono font-semibold tracking-wider text-ink">
+                              {patient.share_code}
+                            </span>
+                            {' · '}vinculado em {formatBrazilDate(linkedAt)}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Link
+                          to={`/pacientes/${patient.id}`}
+                          className="no-underline"
+                        >
+                          <Button size="sm">Ver histórico</Button>
+                        </Link>
+                        <Button
+                          variant="danger"
+                          size="sm"
+                          onClick={() => setConfirmUnlinkId(linkId)}
+                          disabled={unlinkingId === linkId}
+                        >
+                          {unlinkingId === linkId ? '…' : 'Remover'}
+                        </Button>
+                      </div>
+                    </Card>
                   </li>
                 ))}
               </ul>
@@ -264,6 +284,22 @@ export function PatientsPage() {
           </>
         )}
       </section>
+
+      {confirmUnlinkId && (
+        <ConfirmDialog
+          title="Remover paciente?"
+          description={
+            <>
+              {confirmPatient?.patient.full_name?.trim() || 'Este paciente'}{' '}
+              será removido da sua lista. O histórico dele no app não é apagado.
+            </>
+          }
+          confirmLabel="Remover"
+          onCancel={() => setConfirmUnlinkId(null)}
+          onConfirm={() => void confirmUnlink()}
+          confirming={unlinkingId === confirmUnlinkId}
+        />
+      )}
     </div>
   )
 }

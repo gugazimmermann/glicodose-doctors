@@ -1,6 +1,12 @@
 import { useState, type FormEvent } from 'react'
 import { Link } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
+import { useAutoClear } from '../hooks/useAutoClear'
+import { Alert } from '../components/ui/Alert'
+import { Button } from '../components/ui/Button'
+import { Card } from '../components/ui/Card'
+import { Input, Label } from '../components/ui/Input'
+import { PageHeader } from '../components/ui/PageHeader'
 
 function mapRpcError(err: unknown): string {
   if (!(err instanceof Error)) return 'Não foi possível vincular o paciente.'
@@ -23,6 +29,12 @@ export function LinkPatientPage() {
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
   const [linking, setLinking] = useState(false)
+
+  function clearSuccess() {
+    setSuccess(null)
+  }
+
+  useAutoClear(success, clearSuccess, 8000)
 
   async function onLink(e: FormEvent) {
     e.preventDefault()
@@ -58,72 +70,65 @@ export function LinkPatientPage() {
   }
 
   return (
-    <div className="space-y-8">
-      <div>
-        <h1 className="text-2xl font-bold tracking-tight text-ink">
-          Vincular paciente
-        </h1>
-        <p className="mt-1 text-sm text-muted">
-          Digite o código de 6 dígitos do perfil do paciente no app GlicoDose.
-        </p>
-      </div>
+    <div className="mx-auto w-full min-w-0 max-w-md space-y-6 sm:space-y-8">
+      <PageHeader
+        title="Vincular paciente"
+        description="Digite o código de 6 dígitos do perfil do paciente no app GlicoDose."
+      />
 
-      <form
-        onSubmit={onLink}
-        className="rounded-2xl border border-line bg-card p-5 shadow-sm sm:p-6"
-      >
-        <label className="block">
-          <span className="mb-1.5 block text-sm font-medium text-ink">
-            Código do paciente
-          </span>
-          <div className="flex flex-col gap-3 sm:flex-row">
-            <input
-              type="text"
-              value={code}
-              onChange={(e) =>
-                setCode(
-                  e.target.value
-                    .toUpperCase()
-                    .replace(/[^A-Z0-9]/g, '')
-                    .slice(0, 6),
-                )
-              }
-              maxLength={6}
-              placeholder="ABC123"
-              className="w-full rounded-xl border border-line bg-white px-3.5 py-2.5 font-mono text-lg font-semibold tracking-[0.2em] outline-none transition focus:border-brand focus:ring-2 focus:ring-brand/20 sm:max-w-xs"
-              autoComplete="off"
-              spellCheck={false}
-              autoFocus
-            />
-            <button
-              type="submit"
-              disabled={linking}
-              className="rounded-xl bg-brand px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-brand-dark disabled:opacity-60"
-            >
-              {linking ? 'Vinculando…' : 'Salvar código'}
-            </button>
-          </div>
-        </label>
-
-        {error && (
-          <p className="mt-3 rounded-lg bg-danger-soft px-3 py-2 text-sm text-danger">
-            {error}
-          </p>
-        )}
-        {success && (
-          <div className="mt-3 space-y-2">
-            <p className="rounded-lg bg-brand-soft px-3 py-2 text-sm text-brand-dark">
-              {success}
+      <Card className="min-w-0">
+        <form onSubmit={onLink} className="min-w-0 space-y-4">
+          <div className="min-w-0">
+            <Label htmlFor="share-code">Código do paciente</Label>
+            <div className="flex min-w-0 flex-col gap-3 sm:flex-row">
+              <Input
+                id="share-code"
+                type="text"
+                value={code}
+                onChange={(e) =>
+                  setCode(
+                    e.target.value
+                      .toUpperCase()
+                      .replace(/[^A-Z0-9]/g, '')
+                      .slice(0, 6),
+                  )
+                }
+                maxLength={6}
+                placeholder="ABC123"
+                className="w-full min-w-0 text-center font-mono text-xl font-bold tracking-wider sm:max-w-[14rem]"
+                autoComplete="off"
+                spellCheck={false}
+                autoFocus
+                aria-describedby="share-code-hint"
+              />
+              <Button type="submit" disabled={linking} className="sm:shrink-0">
+                {linking ? 'Vinculando…' : 'Vincular'}
+              </Button>
+            </div>
+            <p id="share-code-hint" className="mt-2 text-xs text-muted">
+              6 caracteres — letras e números, sem espaços.
             </p>
-            <Link
-              to="/"
-              className="inline-block text-sm font-semibold text-brand no-underline hover:text-brand-dark"
-            >
-              Ver lista de pacientes →
-            </Link>
           </div>
-        )}
-      </form>
+
+          {error && (
+            <Alert variant="error" onDismiss={() => setError(null)}>
+              {error}
+            </Alert>
+          )}
+          {success && (
+            <div className="space-y-3">
+              <Alert variant="success" onDismiss={clearSuccess}>
+                {success}
+              </Alert>
+              <Link to="/" className="inline-block no-underline">
+                <Button variant="secondary" size="sm">
+                  Ver lista de pacientes
+                </Button>
+              </Link>
+            </div>
+          )}
+        </form>
+      </Card>
     </div>
   )
 }

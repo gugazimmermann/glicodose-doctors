@@ -3,6 +3,12 @@ import { Navigate, useLocation } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../contexts/AuthContext'
 import { BrandLogo } from '../components/BrandLogo'
+import { Alert } from '../components/ui/Alert'
+import { Button } from '../components/ui/Button'
+import { Card } from '../components/ui/Card'
+import { Input, Label } from '../components/ui/Input'
+import { SegmentedControl } from '../components/ui/SegmentedControl'
+import { FullPageSpinner } from '../components/ui/Spinner'
 import { isDoctorProfileComplete } from '../types/database'
 
 type Mode = 'login' | 'signup'
@@ -32,6 +38,10 @@ export function LoginPage() {
       (location.state as { needDoctorProfile?: boolean } | null)
         ?.needDoctorProfile,
     ) || Boolean(session && !doctor && !loading)
+
+  if (loading) {
+    return <FullPageSpinner />
+  }
 
   if (!loading && session && doctor) {
     return (
@@ -93,127 +103,97 @@ export function LoginPage() {
   const showComplete = needDoctor && Boolean(session)
 
   return (
-    <div className="flex min-h-screen items-center justify-center px-4 py-10">
-      <div className="w-full max-w-md">
+    <div className="flex min-h-screen max-w-full items-center justify-center overflow-x-hidden px-4 py-10">
+      <div className="w-full min-w-0 max-w-md">
         <div className="mb-8 text-center">
-          <div className="mx-auto mb-4 w-fit">
-            <BrandLogo size={64} className="shadow-md" />
+          <div className="mx-auto mb-5 w-fit">
+            <BrandLogo size={80} className="shadow-lg ring-4 ring-white/70" />
           </div>
-          <h1 className="text-2xl font-bold tracking-tight text-ink">
+          <h1 className="text-3xl font-bold tracking-tight text-ink">
             GlicoDose Médicos
           </h1>
-          <p className="mt-1 text-sm text-muted">
+          <p className="mt-2 text-sm text-muted">
             Acompanhe o histórico dos seus pacientes
           </p>
         </div>
 
-        <div className="rounded-2xl border border-line bg-card p-6 shadow-sm sm:p-8">
+        <Card className="sm:p-8">
           {!showComplete && (
-            <div className="mb-6 flex rounded-lg bg-surface p-1">
-              <button
-                type="button"
-                onClick={() => {
-                  setMode('login')
-                  setError(null)
-                }}
-                className={`flex-1 rounded-md py-2 text-sm font-semibold transition ${
-                  mode === 'login'
-                    ? 'bg-card text-brand shadow-sm'
-                    : 'text-muted hover:text-ink'
-                }`}
-              >
-                Entrar
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setMode('signup')
-                  setError(null)
-                }}
-                className={`flex-1 rounded-md py-2 text-sm font-semibold transition ${
-                  mode === 'signup'
-                    ? 'bg-card text-brand shadow-sm'
-                    : 'text-muted hover:text-ink'
-                }`}
-              >
-                Cadastrar
-              </button>
-            </div>
+            <SegmentedControl
+              className="mb-6"
+              variant="pills"
+              ariaLabel="Modo de acesso"
+              value={mode}
+              onChange={(next) => {
+                setMode(next)
+                setError(null)
+              }}
+              items={[
+                { value: 'login', label: 'Entrar' },
+                { value: 'signup', label: 'Cadastrar' },
+              ]}
+            />
           )}
 
           {showComplete && (
-            <p className="mb-4 rounded-lg bg-brand-soft px-3 py-2 text-sm text-brand-dark">
+            <Alert variant="info" className="mb-4">
               Conta autenticada. Informe seu nome para concluir o perfil de
               médico.
-            </p>
+            </Alert>
           )}
 
           <form onSubmit={onSubmit} className="space-y-4">
             {(mode === 'signup' || showComplete) && (
-              <label className="block">
-                <span className="mb-1.5 block text-sm font-medium text-ink">
-                  Nome completo
-                </span>
-                <input
+              <div>
+                <Label htmlFor="login-name">Nome completo</Label>
+                <Input
+                  id="login-name"
                   type="text"
                   required
                   value={fullName}
                   onChange={(e) => setFullName(e.target.value)}
-                  className="w-full rounded-xl border border-line bg-white px-3.5 py-2.5 text-sm outline-none transition focus:border-brand focus:ring-2 focus:ring-brand/20"
                   placeholder="Dr(a). Nome"
                   autoComplete="name"
                 />
-              </label>
+              </div>
             )}
 
             {!showComplete && (
               <>
-                <label className="block">
-                  <span className="mb-1.5 block text-sm font-medium text-ink">
-                    E-mail
-                  </span>
-                  <input
+                <div>
+                  <Label htmlFor="login-email">E-mail</Label>
+                  <Input
+                    id="login-email"
                     type="email"
                     required
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
-                    className="w-full rounded-xl border border-line bg-white px-3.5 py-2.5 text-sm outline-none transition focus:border-brand focus:ring-2 focus:ring-brand/20"
                     placeholder="voce@clinica.com"
                     autoComplete="email"
                   />
-                </label>
+                </div>
 
-                <label className="block">
-                  <span className="mb-1.5 block text-sm font-medium text-ink">
-                    Senha
-                  </span>
-                  <input
+                <div>
+                  <Label htmlFor="login-password">Senha</Label>
+                  <Input
+                    id="login-password"
                     type="password"
                     required
                     minLength={6}
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
-                    className="w-full rounded-xl border border-line bg-white px-3.5 py-2.5 text-sm outline-none transition focus:border-brand focus:ring-2 focus:ring-brand/20"
                     placeholder="Mínimo 6 caracteres"
                     autoComplete={
                       mode === 'login' ? 'current-password' : 'new-password'
                     }
                   />
-                </label>
+                </div>
               </>
             )}
 
-            {error && (
-              <p className="rounded-lg bg-danger-soft px-3 py-2 text-sm text-danger">
-                {error}
-              </p>
-            )}
+            {error && <Alert variant="error">{error}</Alert>}
 
-            <button
-              type="submit"
-              disabled={submitting}
-              className="w-full rounded-xl bg-brand py-2.5 text-sm font-semibold text-white transition hover:bg-brand-dark disabled:opacity-60"
-            >
+            <Button type="submit" disabled={submitting} className="w-full" size="lg">
               {submitting
                 ? 'Aguarde…'
                 : showComplete
@@ -221,19 +201,20 @@ export function LoginPage() {
                   : mode === 'login'
                     ? 'Entrar'
                     : 'Criar conta'}
-            </button>
+            </Button>
 
             {showComplete && (
-              <button
+              <Button
                 type="button"
+                variant="ghost"
+                className="w-full"
                 onClick={() => void signOut()}
-                className="w-full text-sm font-medium text-muted hover:text-ink"
               >
                 Usar outra conta
-              </button>
+              </Button>
             )}
           </form>
-        </div>
+        </Card>
       </div>
     </div>
   )
