@@ -23,6 +23,14 @@ supabase secrets set \
   STRIPE_PRICE_SUPPORT_100='price_...'
 ```
 
+`OPENAI_API_KEY` é o mesmo secret do app paciente (`recommend-insulin`). Se ainda não estiver no projeto:
+
+```bash
+supabase secrets set OPENAI_API_KEY='sk-...'
+```
+
+Referência local (sem `VITE_`): `OPENAI_API_KEY` em `.env` — não vai para o bundle do React.
+
 No Stripe Dashboard: 4 produtos **GlicoDose 10/20/50/100** com preços mensais BRL; Customer Portal ativo; webhook para:
 
 `https://<PROJECT_REF>.supabase.co/functions/v1/stripe-doctor-webhook`
@@ -35,6 +43,9 @@ Eventos: `checkout.session.completed`, `customer.subscription.updated`, `custome
 supabase functions deploy create-doctor-checkout
 supabase functions deploy create-doctor-portal
 supabase functions deploy stripe-doctor-webhook
+supabase functions deploy analyze-patient-history
+supabase functions deploy create-public-support-checkout
 ```
 
-O frontend chama as functions com o JWT do médico (`VITE_SUPABASE_URL` / anon key).
+- Checkout/portal/histórico: JWT do médico (`VITE_SUPABASE_URL` / anon key).
+- `create-public-support-checkout`: **sem login** — usado pelo site de marketing (`diabetes-site` `/apoiar`). Mesmos `STRIPE_PRICE_SUPPORT_*`. Não grava em `doctors`.

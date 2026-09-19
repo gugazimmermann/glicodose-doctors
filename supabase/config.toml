@@ -7,6 +7,13 @@ verify_jwt = true
 [functions.create-doctor-portal]
 verify_jwt = true
 
+[functions.analyze-patient-history]
+verify_jwt = true
+
 # Authenticated via Stripe-Signature, not JWT.
 [functions.stripe-doctor-webhook]
+verify_jwt = false
+
+# Public marketing-site Apoiar (no doctor session).
+[functions.create-public-support-checkout]
 verify_jwt = false

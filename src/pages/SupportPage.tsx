@@ -52,9 +52,20 @@ export function SupportPage() {
   const activeProductId = doctor?.supporter_product_id ?? null
 
   useEffect(() => {
+    const onPageShow = () => {
+      setBusyPlan(null)
+      setPortalBusy(false)
+    }
+    window.addEventListener('pageshow', onPageShow)
+    return () => window.removeEventListener('pageshow', onPageShow)
+  }, [])
+
+  useEffect(() => {
     const result = searchParams.get('apoiar')
     if (result !== 'sucesso' && result !== 'cancelado') return
 
+    setBusyPlan(null)
+    setPortalBusy(false)
     setBanner(result)
     const next = new URLSearchParams(searchParams)
     next.delete('apoiar')

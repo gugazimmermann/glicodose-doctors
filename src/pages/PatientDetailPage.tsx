@@ -2,6 +2,7 @@ import { useCallback, useEffect, useId, useState, type FormEvent } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { EntryDetailModal } from '../components/EntryDetailModal'
 import { PatientCharts } from '../components/PatientCharts'
+import { PatientHistoryAiPanel } from '../components/PatientHistoryAiPanel'
 import { Alert } from '../components/ui/Alert'
 import { Button } from '../components/ui/Button'
 import { Card } from '../components/ui/Card'
@@ -427,6 +428,8 @@ export function PatientDetailPage() {
             role="tabpanel"
             aria-labelledby={`${baseId}-tab-history`}
           >
+            <PatientHistoryAiPanel patientId={profile.id} />
+
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <h2 className="sr-only">Histórico</h2>
               {historyLoading ? (
