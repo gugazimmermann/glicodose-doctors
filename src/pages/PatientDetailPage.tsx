@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useId, useState, type FormEvent } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { EntryDetailModal } from '../components/EntryDetailModal'
+import { PatientAlertsPanel } from '../components/PatientAlertsPanel'
 import { PatientCharts } from '../components/PatientCharts'
 import { PatientHistoryAiPanel } from '../components/PatientHistoryAiPanel'
 import { Alert } from '../components/ui/Alert'
@@ -23,6 +24,7 @@ import {
   glucoseToneClass,
   resolveTargetMgdl,
 } from '../lib/historyStats'
+import { formatMinuteOfDay, parseMinuteOfDay } from '../lib/timeOfDay'
 import type { Entry, Profile } from '../types/database'
 
 type PrescriptionForm = {
@@ -31,6 +33,10 @@ type PrescriptionForm = {
   isf_mgdl_per_u: string
   ic_ratio: string
   rapid_insulin_name: string
+  dose_step: string
+  insulin_duration_hours: string
+  night_start: string
+  night_end: string
 }
 
 type HistorySort = 'newest' | 'oldest'
@@ -52,6 +58,10 @@ function profileToForm(profile: Profile): PrescriptionForm {
       profile.isf_mgdl_per_u != null ? String(profile.isf_mgdl_per_u) : '',
     ic_ratio: profile.ic_ratio != null ? String(profile.ic_ratio) : '',
     rapid_insulin_name: profile.rapid_insulin_name?.trim() ?? '',
+    dose_step: String(profile.dose_step ?? 0.5),
+    insulin_duration_hours: String(profile.insulin_duration_hours ?? 4),
+    night_start: formatMinuteOfDay(profile.night_start_minute ?? 1200),
+    night_end: formatMinuteOfDay(profile.night_end_minute ?? 359),
   }
 }
 
@@ -61,6 +71,32 @@ function parsePositiveNumber(value: string, label: string): number {
     throw new Error(`${label} deve ser um número maior que zero.`)
   }
   return n
+}
+
+function prescriptionDiff(
+  before: Profile,
+  after: Partial<Profile>,
+): Record<string, { from: unknown; to: unknown }> {
+  const keys = [
+    'target_glucose_mgdl',
+    'target_night_mgdl',
+    'isf_mgdl_per_u',
+    'ic_ratio',
+    'rapid_insulin_name',
+    'dose_step',
+    'insulin_duration_hours',
+    'night_start_minute',
+    'night_end_minute',
+  ] as const
+  const changes: Record<string, { from: unknown; to: unknown }> = {}
+  for (const key of keys) {
+    const next = after[key]
+    if (next === undefined) continue
+    if (before[key] !== next) {
+      changes[key] = { from: before[key], to: next }
+    }
+  }
+  return changes
 }
 
 export function PatientDetailPage() {
@@ -172,11 +208,25 @@ export function PatientDetailPage() {
     let targetNight: number
     let isf: number
     let ic: number
+    let doseStep: number
+    let durationHours: number
+    let nightStart: number
+    let nightEnd: number
     try {
       targetDay = parsePositiveNumber(currentForm.target_glucose_mgdl, 'Meta dia')
       targetNight = parsePositiveNumber(currentForm.target_night_mgdl, 'Meta noite')
       isf = parsePositiveNumber(currentForm.isf_mgdl_per_u, 'FSI')
       ic = parsePositiveNumber(currentForm.ic_ratio, 'I:C')
+      doseStep = parsePositiveNumber(currentForm.dose_step, 'Passo da dose')
+      durationHours = parsePositiveNumber(
+        currentForm.insulin_duration_hours,
+        'Duração da insulina',
+      )
+      if (durationHours > 8) {
+        throw new Error('Duração da insulina deve ser no máximo 8 horas.')
+      }
+      nightStart = parseMinuteOfDay(currentForm.night_start)
+      nightEnd = parseMinuteOfDay(currentForm.night_end)
     } catch (err) {
       setSaveError(err instanceof Error ? err.message : 'Dados inválidos.')
       return
@@ -188,18 +238,24 @@ export function PatientDetailPage() {
       return
     }
 
+    const payload = {
+      target_glucose_mgdl: targetDay,
+      target_night_mgdl: targetNight,
+      isf_mgdl_per_u: isf,
+      ic_ratio: ic,
+      rapid_insulin_name: insulinName,
+      dose_step: doseStep,
+      insulin_duration_hours: durationHours,
+      night_start_minute: nightStart,
+      night_end_minute: nightEnd,
+      updated_at: new Date().toISOString(),
+    }
+
     setSaving(true)
     try {
       const { data, error: updateError } = await supabase
         .from('profiles')
-        .update({
-          target_glucose_mgdl: targetDay,
-          target_night_mgdl: targetNight,
-          isf_mgdl_per_u: isf,
-          ic_ratio: ic,
-          rapid_insulin_name: insulinName,
-          updated_at: new Date().toISOString(),
-        })
+        .update(payload)
         .eq('id', currentProfile.id)
         .select('*')
         .maybeSingle()
@@ -208,12 +264,78 @@ export function PatientDetailPage() {
       if (!data) throw new Error('Não foi possível salvar. Verifique o vínculo.')
 
       const updated = data as Profile
+      const changes = prescriptionDiff(currentProfile, updated)
+      if (Object.keys(changes).length > 0) {
+        const {
+          data: { user },
+        } = await supabase.auth.getUser()
+        if (user) {
+          await supabase.from('prescription_change_log').insert({
+            patient_id: updated.id,
+            doctor_id: user.id,
+            changes,
+            source: 'manual',
+          })
+        }
+      }
+
       setProfile(updated)
       setForm(profileToForm(updated))
       setSaveSuccess('Prescrição atualizada.')
     } catch (err) {
       setSaveError(
         err instanceof Error ? err.message : 'Não foi possível salvar.',
+      )
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function applyPrescriptionPatch(
+    patch: Partial<Profile>,
+    source: 'manual' | 'ai_apply' = 'ai_apply',
+  ) {
+    if (!profile) return
+    setSaveError(null)
+    setSaveSuccess(null)
+    setSaving(true)
+    try {
+      const { data, error: updateError } = await supabase
+        .from('profiles')
+        .update({
+          ...patch,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', profile.id)
+        .select('*')
+        .maybeSingle()
+
+      if (updateError) throw updateError
+      if (!data) throw new Error('Não foi possível aplicar. Verifique o vínculo.')
+
+      const updated = data as Profile
+      const changes = prescriptionDiff(profile, updated)
+      if (Object.keys(changes).length > 0) {
+        const {
+          data: { user },
+        } = await supabase.auth.getUser()
+        if (user) {
+          await supabase.from('prescription_change_log').insert({
+            patient_id: updated.id,
+            doctor_id: user.id,
+            changes,
+            source,
+          })
+        }
+      }
+
+      setProfile(updated)
+      setForm(profileToForm(updated))
+      setDetailTab('prescription')
+      setSaveSuccess('Sugestão da IA aplicada à prescrição.')
+    } catch (err) {
+      setSaveError(
+        err instanceof Error ? err.message : 'Não foi possível aplicar.',
       )
     } finally {
       setSaving(false)
@@ -403,6 +525,101 @@ export function PatientDetailPage() {
                     required
                   />
                 </div>
+                <div className="min-w-0">
+                  <Label
+                    htmlFor={`${baseId}-dose-step`}
+                    density="stacked"
+                    subtitle="U (ex.: 0,5 ou 1)"
+                  >
+                    Passo da dose
+                  </Label>
+                  <Input
+                    id={`${baseId}-dose-step`}
+                    type="number"
+                    min={0.1}
+                    step="any"
+                    value={form.dose_step}
+                    onChange={(e) =>
+                      setForm((f) =>
+                        f ? { ...f, dose_step: e.target.value } : f,
+                      )
+                    }
+                    className="mt-1.5 font-semibold"
+                    required
+                  />
+                </div>
+                <div className="min-w-0">
+                  <Label
+                    htmlFor={`${baseId}-duration`}
+                    density="stacked"
+                    subtitle="Horas (IOB)"
+                  >
+                    Duração da insulina
+                  </Label>
+                  <Input
+                    id={`${baseId}-duration`}
+                    type="number"
+                    min={1}
+                    max={8}
+                    step="any"
+                    value={form.insulin_duration_hours}
+                    onChange={(e) =>
+                      setForm((f) =>
+                        f
+                          ? { ...f, insulin_duration_hours: e.target.value }
+                          : f,
+                      )
+                    }
+                    className="mt-1.5 font-semibold"
+                    required
+                  />
+                </div>
+                <div className="min-w-0">
+                  <Label
+                    htmlFor={`${baseId}-night-start`}
+                    density="stacked"
+                    subtitle="HH:MM"
+                  >
+                    Início da noite
+                  </Label>
+                  <Input
+                    id={`${baseId}-night-start`}
+                    type="text"
+                    inputMode="numeric"
+                    placeholder="20:00"
+                    value={form.night_start}
+                    onChange={(e) =>
+                      setForm((f) =>
+                        f ? { ...f, night_start: e.target.value } : f,
+                      )
+                    }
+                    className="mt-1.5 font-semibold"
+                    required
+                  />
+                </div>
+                <div className="min-w-0">
+                  <Label
+                    htmlFor={`${baseId}-night-end`}
+                    density="stacked"
+                    subtitle="HH:MM"
+                  >
+                    Fim da noite
+                  </Label>
+                  <Input
+                    id={`${baseId}-night-end`}
+                    type="text"
+                    inputMode="numeric"
+                    placeholder="05:59"
+                    value={form.night_end}
+                    onChange={(e) =>
+                      setForm((f) =>
+                        f ? { ...f, night_end: e.target.value } : f,
+                      )
+                    }
+                    className="mt-1.5 font-semibold"
+                    required
+                  />
+                </div>
               </div>
 
               {saveError && (
@@ -428,7 +645,13 @@ export function PatientDetailPage() {
             role="tabpanel"
             aria-labelledby={`${baseId}-tab-history`}
           >
-            <PatientHistoryAiPanel patientId={profile.id} />
+            <PatientAlertsPanel patientId={profile.id} profile={profile} />
+
+            <PatientHistoryAiPanel
+              patientId={profile.id}
+              profile={profile}
+              onApplySuggestion={(patch) => void applyPrescriptionPatch(patch)}
+            />
 
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <h2 className="sr-only">Histórico</h2>

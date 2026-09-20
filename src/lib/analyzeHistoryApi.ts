@@ -1,5 +1,6 @@
 import { supabase } from './supabase'
 import type { HistoryPeriod } from './historyPeriod'
+import type { Profile } from '../types/database'
 
 export type HistoryAiAchadoTipo =
   | 'discrepancia'
@@ -20,6 +21,7 @@ export type HistoryAiAchado = {
 export type HistoryAiSugestao = {
   parametro: string
   observacao: string
+  valor_sugerido?: number | null
 }
 
 export type HistoryAiAnalysis = {
@@ -53,6 +55,18 @@ export type AnalyzePatientHistoryResult = {
   entryCount: number
   stats: HistoryAiStats
   analysis: HistoryAiAnalysis
+  analysisId?: string | null
+}
+
+export type SavedAiAnalysis = {
+  id: string
+  doctor_id: string
+  patient_id: string
+  period: string
+  entry_count: number
+  stats: HistoryAiStats | Record<string, unknown>
+  analysis: HistoryAiAnalysis
+  created_at: string
 }
 
 function functionsErrorMessage(error: unknown, data: unknown): string {
@@ -88,4 +102,53 @@ export async function analyzePatientHistory(options: {
   }
 
   return result
+}
+
+export async function listPatientAiAnalyses(
+  patientId: string,
+  limit = 10,
+): Promise<SavedAiAnalysis[]> {
+  const { data, error } = await supabase
+    .from('patient_ai_analyses')
+    .select('*')
+    .eq('patient_id', patientId)
+    .order('created_at', { ascending: false })
+    .limit(limit)
+
+  if (error) throw error
+  return (data ?? []) as SavedAiAnalysis[]
+}
+
+/** Map AI suggestion parameter + optional numeric value to a profile patch. */
+export function mapSugestaoToProfilePatch(
+  sugestao: HistoryAiSugestao,
+  _profile: Profile,
+): Partial<Profile> | null {
+  const valor = sugestao.valor_sugerido
+  if (valor == null || !Number.isFinite(valor) || valor <= 0) return null
+
+  const key = sugestao.parametro.trim().toLowerCase()
+  if (key === 'fsi' || key === 'isf' || key.includes('fsi')) {
+    return { isf_mgdl_per_u: valor }
+  }
+  if (key === 'i:c' || key === 'ic' || key.includes('i:c') || key.includes('ic')) {
+    return { ic_ratio: valor }
+  }
+  if (key.includes('meta_dia') || key.includes('meta dia') || key === 'meta_dia') {
+    return { target_glucose_mgdl: valor }
+  }
+  if (
+    key.includes('meta_noite') ||
+    key.includes('meta noite') ||
+    key === 'meta_noite'
+  ) {
+    return { target_night_mgdl: valor }
+  }
+  if (key.includes('dose_step') || key.includes('passo')) {
+    return { dose_step: valor }
+  }
+  if (key.includes('duracao') || key.includes('duração') || key.includes('iob')) {
+    return { insulin_duration_hours: valor }
+  }
+  return null
 }

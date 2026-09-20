@@ -280,6 +280,7 @@ type AnalysisResult = {
   sugestoes_prescricao: Array<{
     parametro: string
     observacao: string
+    valor_sugerido: number | null
   }>
   disclaimer: string
 }
@@ -317,7 +318,13 @@ function normalizeAnalysis(raw: Record<string, unknown>): AnalysisResult {
       const parametro = String(o.parametro ?? '').trim()
       const observacao = String(o.observacao ?? '').trim()
       if (!parametro && !observacao) return null
-      return { parametro: parametro || 'outro', observacao }
+      const rawValor = o.valor_sugerido
+      let valor_sugerido: number | null = null
+      if (rawValor != null && rawValor !== '') {
+        const n = Number(rawValor)
+        if (Number.isFinite(n) && n > 0) valor_sugerido = n
+      }
+      return { parametro: parametro || 'outro', observacao, valor_sugerido }
     })
     .filter((x): x is NonNullable<typeof x> => x != null)
 
@@ -338,6 +345,53 @@ const emptyAnalysis = (): AnalysisResult => ({
   disclaimer:
     'Sugestões de apoio clínico. Não substituem julgamento médico.',
 })
+
+const GPT4O_INPUT_PER_M = 2.5
+const GPT4O_OUTPUT_PER_M = 10
+
+function estimateCostUsd(promptTokens: number, completionTokens: number) {
+  return (
+    (promptTokens / 1_000_000) * GPT4O_INPUT_PER_M +
+    (completionTokens / 1_000_000) * GPT4O_OUTPUT_PER_M
+  )
+}
+
+async function logAiUsage(opts: {
+  supabaseUrl: string
+  serviceKey: string | undefined
+  userId: string
+  model: string
+  promptTokens: number
+  completionTokens: number
+  latencyMs: number
+  success: boolean
+  errorMessage?: string
+  meta?: Record<string, unknown>
+}) {
+  if (!opts.serviceKey) return
+  try {
+    const admin = createClient(opts.supabaseUrl, opts.serviceKey)
+    const total = opts.promptTokens + opts.completionTokens
+    await admin.from('ai_usage_logs').insert({
+      function_name: 'analyze-patient-history',
+      user_id: opts.userId,
+      model: opts.model,
+      prompt_tokens: opts.promptTokens,
+      completion_tokens: opts.completionTokens,
+      total_tokens: total,
+      latency_ms: opts.latencyMs,
+      success: opts.success,
+      error_message: opts.errorMessage ?? null,
+      estimated_cost_usd: estimateCostUsd(
+        opts.promptTokens,
+        opts.completionTokens,
+      ),
+      meta: opts.meta ?? {},
+    })
+  } catch {
+    // ignore
+  }
+}
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
@@ -504,11 +558,13 @@ Formato:
     }
   ],
   "sugestoes_prescricao": [
-    { "parametro": "FSI|I:C|meta_dia|meta_noite|outro", "observacao": "string" }
+    { "parametro": "FSI|I:C|meta_dia|meta_noite|dose_step|duracao_insulina|outro", "observacao": "string", "valor_sugerido": number_or_null }
   ],
   "disclaimer": "string curta lembrando que é apoio clínico"
 }`
 
+    const model = 'gpt-4o'
+    const startedAt = Date.now()
     const openaiRes = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -516,7 +572,7 @@ Formato:
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model: 'gpt-4o',
+        model,
         temperature: 0.2,
         response_format: { type: 'json_object' },
         messages: [
@@ -529,14 +585,45 @@ Formato:
       }),
     })
 
+    const latencyMs = Date.now() - startedAt
+    const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')
+
     if (!openaiRes.ok) {
       const errText = await openaiRes.text()
+      await logAiUsage({
+        supabaseUrl,
+        serviceKey,
+        userId: user.id,
+        model,
+        promptTokens: 0,
+        completionTokens: 0,
+        latencyMs,
+        success: false,
+        errorMessage: errText.slice(0, 500),
+        meta: { patientId, period },
+      })
       return jsonResponse({ error: `OpenAI: ${errText}` }, 502)
     }
 
     const openaiJson = await openaiRes.json()
+    const usage = openaiJson.usage ?? {}
+    const promptTokens = Number(usage.prompt_tokens) || 0
+    const completionTokens = Number(usage.completion_tokens) || 0
+
     const rawContent = openaiJson.choices?.[0]?.message?.content
     if (!rawContent || typeof rawContent !== 'string') {
+      await logAiUsage({
+        supabaseUrl,
+        serviceKey,
+        userId: user.id,
+        model,
+        promptTokens,
+        completionTokens,
+        latencyMs,
+        success: false,
+        errorMessage: 'empty response',
+        meta: { patientId, period },
+      })
       return jsonResponse({ error: 'Resposta vazia da OpenAI' }, 502)
     }
 
@@ -544,14 +631,59 @@ Formato:
     try {
       parsed = JSON.parse(rawContent)
     } catch {
+      await logAiUsage({
+        supabaseUrl,
+        serviceKey,
+        userId: user.id,
+        model,
+        promptTokens,
+        completionTokens,
+        latencyMs,
+        success: false,
+        errorMessage: 'invalid json',
+        meta: { patientId, period },
+      })
       return jsonResponse({ error: 'JSON inválido da OpenAI' }, 502)
+    }
+
+    const analysis = normalizeAnalysis(parsed)
+
+    await logAiUsage({
+      supabaseUrl,
+      serviceKey,
+      userId: user.id,
+      model,
+      promptTokens,
+      completionTokens,
+      latencyMs,
+      success: true,
+      meta: { patientId, period, entryCount: entries.length },
+    })
+
+    let analysisId: string | null = null
+    const { data: saved, error: saveError } = await userClient
+      .from('patient_ai_analyses')
+      .insert({
+        doctor_id: user.id,
+        patient_id: patientId,
+        period,
+        entry_count: entries.length,
+        stats,
+        analysis,
+      })
+      .select('id')
+      .maybeSingle()
+
+    if (!saveError && saved?.id) {
+      analysisId = saved.id as string
     }
 
     return jsonResponse({
       period,
       entryCount: entries.length,
       stats,
-      analysis: normalizeAnalysis(parsed),
+      analysis,
+      analysisId,
     })
   } catch (error) {
     return jsonResponse({ error: String(error) }, 500)

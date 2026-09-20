@@ -7,10 +7,17 @@ import { createQueryBuilder } from '../test/supabaseMock'
 
 const fromMock = vi.fn()
 const fetchPatientEntries = vi.fn()
+const getUserMock = vi.fn().mockResolvedValue({
+  data: { user: { id: 'doctor-1' } },
+  error: null,
+})
 
 vi.mock('../lib/supabase', () => ({
   supabase: {
     from: (...args: unknown[]) => fromMock(...args),
+    auth: {
+      getUser: (...args: unknown[]) => getUserMock(...args),
+    },
   },
 }))
 
@@ -20,6 +27,14 @@ vi.mock('../lib/entriesApi', () => ({
 
 vi.mock('../components/PatientCharts', () => ({
   PatientCharts: () => <div>Charts mock</div>,
+}))
+
+vi.mock('../components/PatientHistoryAiPanel', () => ({
+  PatientHistoryAiPanel: () => <div>AI panel mock</div>,
+}))
+
+vi.mock('../components/PatientAlertsPanel', () => ({
+  PatientAlertsPanel: () => <div>Alerts mock</div>,
 }))
 
 vi.mock('../components/EntryDetailModal', () => ({
