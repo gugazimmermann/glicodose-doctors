@@ -76,6 +76,9 @@ export type Profile = {
   insulin_duration_hours: number
   night_start_minute: number
   night_end_minute: number
+  basal_insulin_name: string | null
+  basal_dose_u: number | null
+  basal_times_minutes: number[]
   disclaimer_accepted_at: string | null
   created_at: string
   updated_at: string

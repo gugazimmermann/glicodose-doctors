@@ -37,14 +37,21 @@ type PrescriptionForm = {
   insulin_duration_hours: string
   night_start: string
   night_end: string
+  basal_insulin_name: string
+  basal_dose_u: string
+  basal_times: string[]
 }
 
 type HistorySort = 'newest' | 'oldest'
 type DetailTab = 'prescription' | 'history' | 'charts'
 
 const HISTORY_PAGE_SIZE = 50
+const MAX_BASAL_TIMES = 2
 
 function profileToForm(profile: Profile): PrescriptionForm {
+  const basalTimes = Array.isArray(profile.basal_times_minutes)
+    ? profile.basal_times_minutes.slice(0, MAX_BASAL_TIMES)
+    : []
   return {
     target_glucose_mgdl:
       profile.target_glucose_mgdl != null
@@ -62,6 +69,10 @@ function profileToForm(profile: Profile): PrescriptionForm {
     insulin_duration_hours: String(profile.insulin_duration_hours ?? 4),
     night_start: formatMinuteOfDay(profile.night_start_minute ?? 1200),
     night_end: formatMinuteOfDay(profile.night_end_minute ?? 359),
+    basal_insulin_name: profile.basal_insulin_name?.trim() ?? '',
+    basal_dose_u:
+      profile.basal_dose_u != null ? String(profile.basal_dose_u) : '',
+    basal_times: basalTimes.map((m) => formatMinuteOfDay(m)),
   }
 }
 
@@ -71,6 +82,41 @@ function parsePositiveNumber(value: string, label: string): number {
     throw new Error(`${label} deve ser um número maior que zero.`)
   }
   return n
+}
+
+function parseOptionalPositiveNumber(
+  value: string,
+  label: string,
+): number | null {
+  const trimmed = value.replace(',', '.').trim()
+  if (!trimmed) return null
+  return parsePositiveNumber(trimmed, label)
+}
+
+function parseBasalTimes(values: string[]): number[] {
+  const minutes: number[] = []
+  for (const raw of values) {
+    const trimmed = raw.trim()
+    if (!trimmed) {
+      throw new Error('Informe o horário da basal ou remova o campo vazio.')
+    }
+    const minute = parseMinuteOfDay(trimmed)
+    if (minutes.includes(minute)) {
+      throw new Error('Horários da basal não podem ser duplicados.')
+    }
+    minutes.push(minute)
+  }
+  if (minutes.length > MAX_BASAL_TIMES) {
+    throw new Error(`No máximo ${MAX_BASAL_TIMES} horários de basal.`)
+  }
+  return minutes.sort((a, b) => a - b)
+}
+
+function sameNumberArray(a: number[] | null | undefined, b: unknown): boolean {
+  if (!Array.isArray(b)) return false
+  const left = a ?? []
+  if (left.length !== b.length) return false
+  return left.every((v, i) => v === b[i])
 }
 
 function prescriptionDiff(
@@ -87,6 +133,8 @@ function prescriptionDiff(
     'insulin_duration_hours',
     'night_start_minute',
     'night_end_minute',
+    'basal_insulin_name',
+    'basal_dose_u',
   ] as const
   const changes: Record<string, { from: unknown; to: unknown }> = {}
   for (const key of keys) {
@@ -94,6 +142,14 @@ function prescriptionDiff(
     if (next === undefined) continue
     if (before[key] !== next) {
       changes[key] = { from: before[key], to: next }
+    }
+  }
+  if (after.basal_times_minutes !== undefined) {
+    if (!sameNumberArray(before.basal_times_minutes, after.basal_times_minutes)) {
+      changes.basal_times_minutes = {
+        from: before.basal_times_minutes ?? [],
+        to: after.basal_times_minutes,
+      }
     }
   }
   return changes
@@ -212,6 +268,8 @@ export function PatientDetailPage() {
     let durationHours: number
     let nightStart: number
     let nightEnd: number
+    let basalDoseU: number | null
+    let basalTimesMinutes: number[]
     try {
       targetDay = parsePositiveNumber(currentForm.target_glucose_mgdl, 'Meta dia')
       targetNight = parsePositiveNumber(currentForm.target_night_mgdl, 'Meta noite')
@@ -227,6 +285,11 @@ export function PatientDetailPage() {
       }
       nightStart = parseMinuteOfDay(currentForm.night_start)
       nightEnd = parseMinuteOfDay(currentForm.night_end)
+      basalDoseU = parseOptionalPositiveNumber(
+        currentForm.basal_dose_u,
+        'Dose basal',
+      )
+      basalTimesMinutes = parseBasalTimes(currentForm.basal_times)
     } catch (err) {
       setSaveError(err instanceof Error ? err.message : 'Dados inválidos.')
       return
@@ -238,6 +301,8 @@ export function PatientDetailPage() {
       return
     }
 
+    const basalInsulinName = currentForm.basal_insulin_name.trim() || null
+
     const payload = {
       target_glucose_mgdl: targetDay,
       target_night_mgdl: targetNight,
@@ -248,6 +313,9 @@ export function PatientDetailPage() {
       insulin_duration_hours: durationHours,
       night_start_minute: nightStart,
       night_end_minute: nightEnd,
+      basal_insulin_name: basalInsulinName,
+      basal_dose_u: basalDoseU,
+      basal_times_minutes: basalTimesMinutes,
       updated_at: new Date().toISOString(),
     }
 
@@ -619,6 +687,133 @@ export function PatientDetailPage() {
                     className="mt-1.5 font-semibold"
                     required
                   />
+                </div>
+              </div>
+
+              <div className="space-y-4 border-t border-line pt-5">
+                <div>
+                  <h3 className="text-sm font-semibold text-ink">
+                    Insulina basal
+                  </h3>
+                  <p className="mt-1 text-sm text-muted">
+                    Nome, dose padrão e até 2 horários do perfil do paciente.
+                  </p>
+                </div>
+                <div className="grid min-w-0 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                  <div className="min-w-0 sm:col-span-2 lg:col-span-2">
+                    <Label
+                      htmlFor={`${baseId}-basal-insulin`}
+                      density="stacked"
+                      subtitle="Nome comercial (opcional)"
+                    >
+                      Insulina basal
+                    </Label>
+                    <Input
+                      id={`${baseId}-basal-insulin`}
+                      type="text"
+                      placeholder="Ex.: Lantus, Tresiba"
+                      value={form.basal_insulin_name}
+                      onChange={(e) =>
+                        setForm((f) =>
+                          f
+                            ? { ...f, basal_insulin_name: e.target.value }
+                            : f,
+                        )
+                      }
+                      className="mt-1.5 font-semibold"
+                    />
+                  </div>
+                  <div className="min-w-0">
+                    <Label
+                      htmlFor={`${baseId}-basal-dose`}
+                      density="stacked"
+                      subtitle="U (opcional)"
+                    >
+                      Dose padrão basal
+                    </Label>
+                    <Input
+                      id={`${baseId}-basal-dose`}
+                      type="number"
+                      min={0.1}
+                      step="any"
+                      value={form.basal_dose_u}
+                      onChange={(e) =>
+                        setForm((f) =>
+                          f ? { ...f, basal_dose_u: e.target.value } : f,
+                        )
+                      }
+                      className="mt-1.5 font-semibold"
+                    />
+                  </div>
+                </div>
+                <div className="space-y-3">
+                  <Label density="stacked" subtitle="HH:MM · até 2">
+                    Horários da basal
+                  </Label>
+                  {form.basal_times.map((time, index) => (
+                    <div
+                      key={`${baseId}-basal-time-${index}`}
+                      className="flex min-w-0 items-end gap-2"
+                    >
+                      <div className="min-w-0 flex-1 sm:max-w-48">
+                        <Input
+                          id={`${baseId}-basal-time-${index}`}
+                          type="text"
+                          inputMode="numeric"
+                          placeholder="22:00"
+                          aria-label={`Horário basal ${index + 1}`}
+                          value={time}
+                          onChange={(e) =>
+                            setForm((f) => {
+                              if (!f) return f
+                              const next = [...f.basal_times]
+                              next[index] = e.target.value
+                              return { ...f, basal_times: next }
+                            })
+                          }
+                          className="font-semibold"
+                        />
+                      </div>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() =>
+                          setForm((f) =>
+                            f
+                              ? {
+                                  ...f,
+                                  basal_times: f.basal_times.filter(
+                                    (_, i) => i !== index,
+                                  ),
+                                }
+                              : f,
+                          )
+                        }
+                      >
+                        Remover
+                      </Button>
+                    </div>
+                  ))}
+                  {form.basal_times.length < MAX_BASAL_TIMES && (
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      size="sm"
+                      onClick={() =>
+                        setForm((f) =>
+                          f && f.basal_times.length < MAX_BASAL_TIMES
+                            ? {
+                                ...f,
+                                basal_times: [...f.basal_times, ''],
+                              }
+                            : f,
+                        )
+                      }
+                    >
+                      Adicionar horário
+                    </Button>
+                  )}
                 </div>
               </div>
 

@@ -157,6 +157,75 @@ describe('PatientDetailPage', () => {
     )
   })
 
+  it('loads and saves basal insulin fields', async () => {
+    const user = userEvent.setup()
+    const profile = makeProfile({
+      basal_insulin_name: 'Lantus',
+      basal_dose_u: 12,
+      basal_times_minutes: [22 * 60],
+    })
+    const updated = {
+      ...profile,
+      basal_insulin_name: 'Tresiba',
+      basal_dose_u: 14,
+      basal_times_minutes: [22 * 60, 8 * 60],
+    }
+    let updatePayload: Record<string, unknown> | null = null
+    fromMock.mockImplementation(() => {
+      const builder = createQueryBuilder({ data: profile, error: null })
+      ;(builder.update as ReturnType<typeof vi.fn>).mockImplementation(
+        (payload: Record<string, unknown>) => {
+          updatePayload = payload
+          return createQueryBuilder({ data: updated, error: null })
+        },
+      )
+      return builder
+    })
+
+    renderDetail()
+    expect(await screen.findByText('Paciente Teste')).toBeInTheDocument()
+    await user.click(screen.getByRole('tab', { name: 'Prescrição' }))
+
+    expect(screen.getByLabelText(/Insulina basal/)).toHaveValue('Lantus')
+    expect(screen.getByLabelText(/Dose padrão basal/)).toHaveValue(12)
+    expect(screen.getByLabelText('Horário basal 1')).toHaveValue('22:00')
+
+    await user.clear(screen.getByLabelText(/Insulina basal/))
+    await user.type(screen.getByLabelText(/Insulina basal/), 'Tresiba')
+    await user.clear(screen.getByLabelText(/Dose padrão basal/))
+    await user.type(screen.getByLabelText(/Dose padrão basal/), '14')
+    await user.click(screen.getByRole('button', { name: 'Adicionar horário' }))
+    await user.type(screen.getByLabelText('Horário basal 2'), '08:00')
+
+    fireEvent.submit(screen.getByRole('tabpanel'))
+    await waitFor(() =>
+      expect(screen.getByText('Prescrição atualizada.')).toBeInTheDocument(),
+    )
+    expect(updatePayload).toEqual(
+      expect.objectContaining({
+        basal_insulin_name: 'Tresiba',
+        basal_dose_u: 14,
+        basal_times_minutes: [8 * 60, 22 * 60],
+      }),
+    )
+  })
+
+  it('rejects duplicate basal times', async () => {
+    const user = userEvent.setup()
+    const profile = makeProfile({ basal_times_minutes: [22 * 60] })
+    fromMock.mockReturnValue(createQueryBuilder({ data: profile, error: null }))
+
+    renderDetail()
+    expect(await screen.findByText('Paciente Teste')).toBeInTheDocument()
+    await user.click(screen.getByRole('tab', { name: 'Prescrição' }))
+    await user.click(screen.getByRole('button', { name: 'Adicionar horário' }))
+    await user.type(screen.getByLabelText('Horário basal 2'), '22:00')
+    fireEvent.submit(screen.getByRole('tabpanel'))
+    expect(
+      await screen.findByText('Horários da basal não podem ser duplicados.'),
+    ).toBeInTheDocument()
+  })
+
   it('handles save failure and charts tab', async () => {
     const user = userEvent.setup()
     const profile = makeProfile()
