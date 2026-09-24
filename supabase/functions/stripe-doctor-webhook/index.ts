@@ -1,4 +1,6 @@
-// Mirrors Stripe subscription events onto public.doctors supporter_* columns.
+// Mirrors Stripe subscription events onto:
+// - public.doctors (portal checkouts with doctor_id)
+// - public.public_supporters (marketing-site /apoiar, source=marketing-site)
 // Deploy: supabase functions deploy stripe-doctor-webhook
 // verify_jwt = false — authenticate via Stripe-Signature.
 
@@ -49,6 +51,21 @@ function doctorIdFromSubscription(
   subscription: Stripe.Subscription,
 ): string | null {
   return subscription.metadata?.doctor_id ?? null
+}
+
+function isMarketingSiteSource(
+  metadata: Stripe.Metadata | null | undefined,
+): boolean {
+  return metadata?.source === 'marketing-site'
+}
+
+function customerIdOf(
+  customer: string | Stripe.Customer | Stripe.DeletedCustomer | null,
+): string | null {
+  if (!customer) return null
+  if (typeof customer === 'string') return customer
+  if (typeof customer === 'object' && 'id' in customer) return customer.id
+  return null
 }
 
 Deno.serve(async (req) => {
@@ -110,21 +127,91 @@ Deno.serve(async (req) => {
       if (error) throw error
     }
 
+    async function upsertPublicSupporter(row: {
+      stripe_customer_id: string
+      stripe_subscription_id?: string | null
+      email?: string | null
+      full_name?: string | null
+      supporter_product_id?: string | null
+      supporter_status: SupporterStatus
+      supporter_expires_at?: string | null
+    }) {
+      const patch: Record<string, unknown> = {
+        stripe_customer_id: row.stripe_customer_id,
+        supporter_status: row.supporter_status,
+        supporter_store: 'stripe',
+        supporter_updated_at: new Date().toISOString(),
+      }
+      if (row.stripe_subscription_id !== undefined) {
+        patch.stripe_subscription_id = row.stripe_subscription_id
+      }
+      if (row.email) patch.email = row.email
+      if (row.full_name) patch.full_name = row.full_name
+      if (row.supporter_product_id) {
+        patch.supporter_product_id = row.supporter_product_id
+      }
+      if (row.supporter_expires_at !== undefined) {
+        patch.supporter_expires_at = row.supporter_expires_at
+      }
+
+      const { error } = await admin
+        .from('public_supporters')
+        .upsert(patch, { onConflict: 'stripe_customer_id' })
+      if (error) throw error
+    }
+
     async function resolveDoctorIdFromCustomer(
       customerId: string | Stripe.Customer | Stripe.DeletedCustomer | null,
     ): Promise<string | null> {
-      if (!customerId || typeof customerId !== 'string') {
-        if (customerId && typeof customerId === 'object' && 'id' in customerId) {
-          return resolveDoctorIdFromCustomer(customerId.id)
-        }
-        return null
-      }
+      const id = customerIdOf(customerId)
+      if (!id) return null
       const { data } = await admin
         .from('doctors')
         .select('id')
-        .eq('stripe_customer_id', customerId)
+        .eq('stripe_customer_id', id)
         .maybeSingle()
       return data?.id ?? null
+    }
+
+    async function loadCustomerDetails(
+      customerId: string | null,
+    ): Promise<{ email: string | null; full_name: string | null }> {
+      if (!customerId) return { email: null, full_name: null }
+      try {
+        const customer = await stripe.customers.retrieve(customerId)
+        if (customer.deleted) return { email: null, full_name: null }
+        return {
+          email: customer.email ?? null,
+          full_name: customer.name ?? null,
+        }
+      } catch (err) {
+        console.error('Failed to load Stripe customer', customerId, err)
+        return { email: null, full_name: null }
+      }
+    }
+
+    async function handleMarketingSiteSubscription(
+      subscription: Stripe.Subscription,
+      statusOverride?: SupporterStatus,
+    ) {
+      const customerId = customerIdOf(subscription.customer)
+      if (!customerId) {
+        console.log('marketing-site subscription without customer id')
+        return
+      }
+      const details = await loadCustomerDetails(customerId)
+      const plan = planFromSubscription(subscription)
+      await upsertPublicSupporter({
+        stripe_customer_id: customerId,
+        stripe_subscription_id: subscription.id,
+        email: details.email,
+        full_name: details.full_name,
+        supporter_product_id: plan,
+        supporter_status: statusOverride ?? statusFromSubscription(subscription),
+        supporter_expires_at: new Date(
+          subscription.current_period_end * 1000,
+        ).toISOString(),
+      })
     }
 
     switch (event.type) {
@@ -136,46 +223,128 @@ Deno.serve(async (req) => {
           session.metadata?.doctor_id ??
           session.client_reference_id ??
           null
-        if (!doctorId) {
-          console.log('checkout.session.completed without doctor_id')
+
+        if (doctorId) {
+          const plan =
+            (session.metadata?.support_plan as SupportPlanKey | undefined) ??
+            null
+          const customerId =
+            typeof session.customer === 'string' ? session.customer : null
+
+          const patch: Record<string, unknown> = {
+            supporter_status: 'active',
+          }
+          if (plan) patch.supporter_product_id = plan
+          if (customerId) patch.stripe_customer_id = customerId
+
+          if (typeof session.subscription === 'string') {
+            const sub = await stripe.subscriptions.retrieve(session.subscription)
+            patch.supporter_status = statusFromSubscription(sub)
+            patch.supporter_expires_at = new Date(
+              sub.current_period_end * 1000,
+            ).toISOString()
+            const subPlan = planFromSubscription(sub)
+            if (subPlan) patch.supporter_product_id = subPlan
+          }
+
+          await updateDoctor(doctorId, patch)
           break
         }
 
-        const plan =
-          (session.metadata?.support_plan as SupportPlanKey | undefined) ??
-          null
-        const customerId =
-          typeof session.customer === 'string' ? session.customer : null
+        if (
+          isMarketingSiteSource(session.metadata) ||
+          (typeof session.subscription === 'string' &&
+            isMarketingSiteSource(
+              (
+                await stripe.subscriptions.retrieve(session.subscription)
+              ).metadata,
+            ))
+        ) {
+          const customerId =
+            typeof session.customer === 'string' ? session.customer : null
+          if (!customerId) {
+            console.log('marketing-site checkout without customer id')
+            break
+          }
 
-        const patch: Record<string, unknown> = {
-          supporter_status: 'active',
+          const plan =
+            (session.metadata?.support_plan as SupportPlanKey | undefined) ??
+            null
+          let status: SupporterStatus = 'active'
+          let expiresAt: string | null = null
+          let subscriptionId: string | null =
+            typeof session.subscription === 'string'
+              ? session.subscription
+              : null
+          let resolvedPlan = plan
+
+          if (subscriptionId) {
+            const sub = await stripe.subscriptions.retrieve(subscriptionId)
+            status = statusFromSubscription(sub)
+            expiresAt = new Date(sub.current_period_end * 1000).toISOString()
+            const subPlan = planFromSubscription(sub)
+            if (subPlan) resolvedPlan = subPlan
+          }
+
+          const fromSession = {
+            email: session.customer_details?.email ?? session.customer_email,
+            full_name: session.customer_details?.name ?? null,
+          }
+          const fromCustomer = await loadCustomerDetails(customerId)
+
+          await upsertPublicSupporter({
+            stripe_customer_id: customerId,
+            stripe_subscription_id: subscriptionId,
+            email: fromSession.email ?? fromCustomer.email,
+            full_name: fromSession.full_name ?? fromCustomer.full_name,
+            supporter_product_id: resolvedPlan,
+            supporter_status: status,
+            supporter_expires_at: expiresAt,
+          })
+          break
         }
-        if (plan) patch.supporter_product_id = plan
-        if (customerId) patch.stripe_customer_id = customerId
 
-        if (typeof session.subscription === 'string') {
-          const sub = await stripe.subscriptions.retrieve(session.subscription)
-          patch.supporter_status = statusFromSubscription(sub)
-          patch.supporter_expires_at = new Date(
-            sub.current_period_end * 1000,
-          ).toISOString()
-          const subPlan = planFromSubscription(sub)
-          if (subPlan) patch.supporter_product_id = subPlan
-        }
-
-        await updateDoctor(doctorId, patch)
+        console.log('checkout.session.completed without doctor_id or site source')
         break
       }
 
       case 'customer.subscription.updated':
       case 'customer.subscription.deleted': {
         const subscription = event.data.object as Stripe.Subscription
+
+        if (isMarketingSiteSource(subscription.metadata)) {
+          const status: SupporterStatus =
+            event.type === 'customer.subscription.deleted'
+              ? 'expired'
+              : statusFromSubscription(subscription)
+          await handleMarketingSiteSubscription(subscription, status)
+          break
+        }
+
         let doctorId = doctorIdFromSubscription(subscription)
         if (!doctorId) {
           doctorId = await resolveDoctorIdFromCustomer(subscription.customer)
         }
         if (!doctorId) {
-          console.log(`${event.type} without resolvable doctor_id`)
+          // Subscription may be marketing-site without metadata on older records —
+          // try public_supporters by customer id before giving up.
+          const customerId = customerIdOf(subscription.customer)
+          if (customerId) {
+            const { data: existing } = await admin
+              .from('public_supporters')
+              .select('id')
+              .eq('stripe_customer_id', customerId)
+              .maybeSingle()
+            if (existing) {
+              const status: SupporterStatus =
+                event.type === 'customer.subscription.deleted'
+                  ? 'expired'
+                  : statusFromSubscription(subscription)
+              await handleMarketingSiteSubscription(subscription, status)
+              break
+            }
+          }
+          console.log(`${event.type} without resolvable doctor_id or site supporter`)
           break
         }
 
@@ -200,8 +369,25 @@ Deno.serve(async (req) => {
       case 'invoice.payment_failed': {
         const invoice = event.data.object as Stripe.Invoice
         const doctorId = await resolveDoctorIdFromCustomer(invoice.customer)
-        if (!doctorId) break
-        await updateDoctor(doctorId, { supporter_status: 'grace' })
+        if (doctorId) {
+          await updateDoctor(doctorId, { supporter_status: 'grace' })
+          break
+        }
+
+        const customerId = customerIdOf(invoice.customer)
+        if (!customerId) break
+
+        const { data: existing } = await admin
+          .from('public_supporters')
+          .select('id')
+          .eq('stripe_customer_id', customerId)
+          .maybeSingle()
+        if (existing) {
+          await upsertPublicSupporter({
+            stripe_customer_id: customerId,
+            supporter_status: 'grace',
+          })
+        }
         break
       }
 

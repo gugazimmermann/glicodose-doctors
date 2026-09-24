@@ -68,6 +68,7 @@ supabase functions deploy send-contact
 ```
 
 - Checkout/portal/histórico: JWT do médico (`VITE_SUPABASE_URL` / anon key).
-- `create-public-support-checkout`: **sem login** — usado pelo site de marketing (`diabetes-site` `/apoiar`). Mesmos `STRIPE_PRICE_SUPPORT_*`. Não grava em `doctors`.
+- `create-public-support-checkout`: **sem login** — usado pelo site de marketing (`diabetes-site` `/apoiar`). Mesmos `STRIPE_PRICE_SUPPORT_*`. Não grava em `doctors`; o webhook espelha em `public_supporters`.
+- `stripe-doctor-webhook`: espelha portal médico em `doctors` e checkouts `source=marketing-site` em `public_supporters` (admin Doações).
 - `create-public-support-portal`: **sem login** — abre o Billing Portal pelo e-mail do checkout (`diabetes-site` `/apoiar`).
 - `send-contact`: **sem login** — formulário de contato do site (`diabetes-site` `/contato`) via Resend → `CONTACT_TO_EMAIL`.
