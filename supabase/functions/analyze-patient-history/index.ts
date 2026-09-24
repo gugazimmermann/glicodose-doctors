@@ -368,11 +368,14 @@ async function logAiUsage(opts: {
   errorMessage?: string
   meta?: Record<string, unknown>
 }) {
-  if (!opts.serviceKey) return
+  if (!opts.serviceKey) {
+    console.error('ai_usage_logs: SUPABASE_SERVICE_ROLE_KEY missing')
+    return
+  }
   try {
     const admin = createClient(opts.supabaseUrl, opts.serviceKey)
     const total = opts.promptTokens + opts.completionTokens
-    await admin.from('ai_usage_logs').insert({
+    const { error } = await admin.from('ai_usage_logs').insert({
       function_name: 'analyze-patient-history',
       user_id: opts.userId,
       model: opts.model,
@@ -388,8 +391,11 @@ async function logAiUsage(opts: {
       ),
       meta: opts.meta ?? {},
     })
-  } catch {
-    // ignore
+    if (error) {
+      console.error('ai_usage_logs insert failed:', error.message)
+    }
+  } catch (err) {
+    console.error('ai_usage_logs insert threw:', err)
   }
 }
 
@@ -661,21 +667,49 @@ Formato:
     })
 
     let analysisId: string | null = null
+    const row = {
+      doctor_id: user.id,
+      patient_id: patientId,
+      period,
+      entry_count: entries.length,
+      stats,
+      analysis,
+    }
+
     const { data: saved, error: saveError } = await userClient
       .from('patient_ai_analyses')
-      .insert({
-        doctor_id: user.id,
-        patient_id: patientId,
-        period,
-        entry_count: entries.length,
-        stats,
-        analysis,
-      })
+      .insert(row)
       .select('id')
       .maybeSingle()
 
     if (!saveError && saved?.id) {
       analysisId = saved.id as string
+    } else if (serviceKey) {
+      if (saveError) {
+        console.error(
+          'patient_ai_analyses user insert failed:',
+          saveError.message,
+        )
+      }
+      const admin = createClient(supabaseUrl, serviceKey)
+      const { data: adminSaved, error: adminError } = await admin
+        .from('patient_ai_analyses')
+        .insert(row)
+        .select('id')
+        .maybeSingle()
+      if (adminError) {
+        console.error(
+          'patient_ai_analyses service-role insert failed:',
+          adminError.message,
+        )
+      } else if (adminSaved?.id) {
+        analysisId = adminSaved.id as string
+      }
+    } else if (saveError) {
+      console.error(
+        'patient_ai_analyses insert failed (no service role):',
+        saveError.message,
+      )
     }
 
     return jsonResponse({
