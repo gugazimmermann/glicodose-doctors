@@ -1,5 +1,9 @@
 import { supabase } from './supabase'
 import type { HistoryPeriod } from './historyPeriod'
+import {
+  parseRatioSchedule,
+  patchMidnightSegment,
+} from './ratioSchedule'
 import type { Profile } from '../types/database'
 
 export type HistoryAiAchadoTipo =
@@ -122,17 +126,33 @@ export async function listPatientAiAnalyses(
 /** Map AI suggestion parameter + optional numeric value to a profile patch. */
 export function mapSugestaoToProfilePatch(
   sugestao: HistoryAiSugestao,
-  _profile: Profile,
+  profile: Profile,
 ): Partial<Profile> | null {
   const valor = sugestao.valor_sugerido
   if (valor == null || !Number.isFinite(valor) || valor <= 0) return null
 
   const key = sugestao.parametro.trim().toLowerCase()
   if (key === 'fsi' || key === 'isf' || key.includes('fsi')) {
-    return { isf_mgdl_per_u: valor }
+    const schedule = patchMidnightSegment(
+      parseRatioSchedule(profile.isf_schedule),
+      valor,
+      profile.isf_mgdl_per_u,
+    )
+    return {
+      isf_mgdl_per_u: valor,
+      isf_schedule: schedule,
+    }
   }
   if (key === 'i:c' || key === 'ic' || key.includes('i:c') || key.includes('ic')) {
-    return { ic_ratio: valor }
+    const schedule = patchMidnightSegment(
+      parseRatioSchedule(profile.ic_schedule),
+      valor,
+      profile.ic_ratio,
+    )
+    return {
+      ic_ratio: valor,
+      ic_schedule: schedule,
+    }
   }
   if (key.includes('meta_dia') || key.includes('meta dia') || key === 'meta_dia') {
     return { target_glucose_mgdl: valor }

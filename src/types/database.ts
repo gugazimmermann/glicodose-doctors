@@ -69,6 +69,8 @@ export type Profile = {
   target_night_mgdl: number | null
   isf_mgdl_per_u: number | null
   ic_ratio: number | null
+  isf_schedule?: RatioSegment[] | null
+  ic_schedule?: RatioSegment[] | null
   rapid_insulin_name: string | null
   diabetes_type: string | null
   share_code: string
@@ -82,6 +84,11 @@ export type Profile = {
   disclaimer_accepted_at: string | null
   created_at: string
   updated_at: string
+}
+
+export type RatioSegment = {
+  start_minute: number
+  value: number
 }
 
 export type Entry = {

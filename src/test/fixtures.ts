@@ -59,6 +59,8 @@ export function makeProfile(overrides: Partial<Profile> = {}): Profile {
     target_night_mgdl: 120,
     isf_mgdl_per_u: 40,
     ic_ratio: 10,
+    isf_schedule: [{ start_minute: 0, value: 40 }],
+    ic_schedule: [{ start_minute: 0, value: 10 }],
     rapid_insulin_name: 'Humalog',
     diabetes_type: 'type_1',
     share_code: 'ABC123',

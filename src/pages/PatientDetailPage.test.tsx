@@ -347,6 +347,8 @@ describe('PatientDetailPage', () => {
       target_night_mgdl: null,
       isf_mgdl_per_u: null,
       ic_ratio: null,
+      isf_schedule: [],
+      ic_schedule: [],
       rapid_insulin_name: null,
     })
     let n = 0

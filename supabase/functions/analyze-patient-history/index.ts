@@ -22,9 +22,41 @@ type ProfileRow = {
   night_end_minute: number | null
   isf_mgdl_per_u: number | null
   ic_ratio: number | null
+  isf_schedule: unknown
+  ic_schedule: unknown
   rapid_insulin_name: string | null
   dose_step: number | null
   insulin_duration_hours: number | null
+}
+
+function summarizeSchedule(raw: unknown, scalar: number | null): string {
+  if (!Array.isArray(raw) || raw.length === 0) {
+    return scalar != null ? `00:00–24:00: ${scalar}` : '—'
+  }
+  const parts: string[] = []
+  const sorted = [...raw]
+    .map((e) => {
+      if (e == null || typeof e !== 'object') return null
+      const row = e as Record<string, unknown>
+      const start = Number(row.start_minute)
+      const value = Number(row.value)
+      if (!Number.isFinite(start) || !Number.isFinite(value)) return null
+      return { start_minute: Math.round(start), value }
+    })
+    .filter((x): x is { start_minute: number; value: number } => x != null)
+    .sort((a, b) => a.start_minute - b.start_minute)
+  for (let i = 0; i < sorted.length; i++) {
+    const s = sorted[i]
+    const end = i + 1 < sorted.length ? sorted[i + 1].start_minute : 1440
+    const sh = String(Math.floor(s.start_minute / 60)).padStart(2, '0')
+    const sm = String(s.start_minute % 60).padStart(2, '0')
+    const endLabel =
+      end >= 1440
+        ? '24:00'
+        : `${String(Math.floor(end / 60)).padStart(2, '0')}:${String(end % 60).padStart(2, '0')}`
+    parts.push(`${sh}:${sm}–${endLabel}: ${s.value}`)
+  }
+  return parts.join('; ') || (scalar != null ? String(scalar) : '—')
 }
 
 type EntryRow = {
@@ -473,7 +505,7 @@ Deno.serve(async (req) => {
     const { data: profile, error: profileError } = await userClient
       .from('profiles')
       .select(
-        'id, full_name, diabetes_type, target_glucose_mgdl, target_night_mgdl, night_start_minute, night_end_minute, isf_mgdl_per_u, ic_ratio, rapid_insulin_name, dose_step, insulin_duration_hours',
+        'id, full_name, diabetes_type, target_glucose_mgdl, target_night_mgdl, night_start_minute, night_end_minute, isf_mgdl_per_u, ic_ratio, isf_schedule, ic_schedule, rapid_insulin_name, dose_step, insulin_duration_hours',
       )
       .eq('id', patientId)
       .maybeSingle()
@@ -528,7 +560,15 @@ Deno.serve(async (req) => {
         meta_dia_mgdl: profileRow.target_glucose_mgdl,
         meta_noite_mgdl: profileRow.target_night_mgdl,
         fsi_mgdl_por_u: profileRow.isf_mgdl_per_u,
+        fsi_faixas: summarizeSchedule(
+          profileRow.isf_schedule,
+          profileRow.isf_mgdl_per_u,
+        ),
         ic_ratio: profileRow.ic_ratio,
+        ic_faixas: summarizeSchedule(
+          profileRow.ic_schedule,
+          profileRow.ic_ratio,
+        ),
         insulina_rapida: profileRow.rapid_insulin_name,
         dose_step: profileRow.dose_step,
         duracao_insulina_h: profileRow.insulin_duration_hours,
@@ -550,6 +590,7 @@ Regras:
 - Seja específico e cite evidências dos dados (números, datas, padrões).
 - Linguagem em português do Brasil, objetiva.
 - Severidade: alta (risco clínico evidente), media, baixa.
+- Coeficiente de variação (CV) glicêmico: meta típica < 36%. Use metricas.glucoseCvPercent quando disponível. Só classifique como irregularidade de "alta variabilidade" se CV ≥ 36. Se CV < 36, não emita achado de alta variabilidade (pode citar o CV no resumo como dentro da meta, se útil).
 
 Formato:
 {

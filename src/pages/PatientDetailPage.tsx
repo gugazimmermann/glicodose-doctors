@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useId, useState, type FormEvent } from 'react'
 import { Link, useParams } from 'react-router-dom'
+import { RatioScheduleEditor } from '../components/RatioScheduleEditor'
 import { EntryDetailModal } from '../components/EntryDetailModal'
 import { PatientAlertsPanel } from '../components/PatientAlertsPanel'
 import { PatientCharts } from '../components/PatientCharts'
@@ -25,13 +26,20 @@ import {
   resolveTargetMgdl,
 } from '../lib/historyStats'
 import { formatMinuteOfDay, parseMinuteOfDay } from '../lib/timeOfDay'
+import {
+  mirrorMidnightValue,
+  normalizeRatioSchedule,
+  parseRatioSchedule,
+  validateRatioSchedule,
+  type RatioSegment,
+} from '../lib/ratioSchedule'
 import type { Entry, Profile } from '../types/database'
 
 type PrescriptionForm = {
   target_glucose_mgdl: string
   target_night_mgdl: string
-  isf_mgdl_per_u: string
-  ic_ratio: string
+  isf_schedule: RatioSegment[]
+  ic_schedule: RatioSegment[]
   rapid_insulin_name: string
   dose_step: string
   insulin_duration_hours: string
@@ -52,6 +60,14 @@ function profileToForm(profile: Profile): PrescriptionForm {
   const basalTimes = Array.isArray(profile.basal_times_minutes)
     ? profile.basal_times_minutes.slice(0, MAX_BASAL_TIMES)
     : []
+  const isfSchedule = normalizeRatioSchedule(
+    parseRatioSchedule(profile.isf_schedule),
+    profile.isf_mgdl_per_u,
+  )
+  const icSchedule = normalizeRatioSchedule(
+    parseRatioSchedule(profile.ic_schedule),
+    profile.ic_ratio,
+  )
   return {
     target_glucose_mgdl:
       profile.target_glucose_mgdl != null
@@ -61,9 +77,12 @@ function profileToForm(profile: Profile): PrescriptionForm {
       profile.target_night_mgdl != null
         ? String(profile.target_night_mgdl)
         : '',
-    isf_mgdl_per_u:
-      profile.isf_mgdl_per_u != null ? String(profile.isf_mgdl_per_u) : '',
-    ic_ratio: profile.ic_ratio != null ? String(profile.ic_ratio) : '',
+    isf_schedule:
+      isfSchedule.length > 0
+        ? isfSchedule
+        : [{ start_minute: 0, value: 0 }],
+    ic_schedule:
+      icSchedule.length > 0 ? icSchedule : [{ start_minute: 0, value: 0 }],
     rapid_insulin_name: profile.rapid_insulin_name?.trim() ?? '',
     dose_step: String(profile.dose_step ?? 0.5),
     insulin_duration_hours: String(profile.insulin_duration_hours ?? 4),
@@ -119,6 +138,23 @@ function sameNumberArray(a: number[] | null | undefined, b: unknown): boolean {
   return left.every((v, i) => v === b[i])
 }
 
+function sameSchedule(
+  a: RatioSegment[] | null | undefined,
+  b: unknown,
+): boolean {
+  if (!Array.isArray(b)) return false
+  const left = a ?? []
+  if (left.length !== b.length) return false
+  return left.every((seg, i) => {
+    const other = b[i] as RatioSegment
+    return (
+      other != null &&
+      seg.start_minute === other.start_minute &&
+      seg.value === other.value
+    )
+  })
+}
+
 function prescriptionDiff(
   before: Profile,
   after: Partial<Profile>,
@@ -142,6 +178,22 @@ function prescriptionDiff(
     if (next === undefined) continue
     if (before[key] !== next) {
       changes[key] = { from: before[key], to: next }
+    }
+  }
+  if (after.isf_schedule !== undefined) {
+    if (!sameSchedule(before.isf_schedule, after.isf_schedule)) {
+      changes.isf_schedule = {
+        from: before.isf_schedule ?? [],
+        to: after.isf_schedule,
+      }
+    }
+  }
+  if (after.ic_schedule !== undefined) {
+    if (!sameSchedule(before.ic_schedule, after.ic_schedule)) {
+      changes.ic_schedule = {
+        from: before.ic_schedule ?? [],
+        to: after.ic_schedule,
+      }
     }
   }
   if (after.basal_times_minutes !== undefined) {
@@ -262,6 +314,8 @@ export function PatientDetailPage() {
 
     let targetDay: number
     let targetNight: number
+    let isfSchedule: RatioSegment[]
+    let icSchedule: RatioSegment[]
     let isf: number
     let ic: number
     let doseStep: number
@@ -273,8 +327,17 @@ export function PatientDetailPage() {
     try {
       targetDay = parsePositiveNumber(currentForm.target_glucose_mgdl, 'Meta dia')
       targetNight = parsePositiveNumber(currentForm.target_night_mgdl, 'Meta noite')
-      isf = parsePositiveNumber(currentForm.isf_mgdl_per_u, 'FSI')
-      ic = parsePositiveNumber(currentForm.ic_ratio, 'I:C')
+      isfSchedule = normalizeRatioSchedule(currentForm.isf_schedule)
+      icSchedule = normalizeRatioSchedule(currentForm.ic_schedule)
+      const isfErr = validateRatioSchedule(isfSchedule, 'FSI')
+      if (isfErr) throw new Error(isfErr)
+      const icErr = validateRatioSchedule(icSchedule, 'I:C')
+      if (icErr) throw new Error(icErr)
+      isf = mirrorMidnightValue(isfSchedule) ?? 0
+      ic = mirrorMidnightValue(icSchedule) ?? 0
+      if (isf <= 0 || ic <= 0) {
+        throw new Error('FSI e I:C devem ter valor positivo na faixa 00:00.')
+      }
       doseStep = parsePositiveNumber(currentForm.dose_step, 'Passo da dose')
       durationHours = parsePositiveNumber(
         currentForm.insulin_duration_hours,
@@ -308,6 +371,8 @@ export function PatientDetailPage() {
       target_night_mgdl: targetNight,
       isf_mgdl_per_u: isf,
       ic_ratio: ic,
+      isf_schedule: isfSchedule,
+      ic_schedule: icSchedule,
       rapid_insulin_name: insulinName,
       dose_step: doseStep,
       insulin_duration_hours: durationHours,
@@ -526,50 +591,28 @@ export function PatientDetailPage() {
                     required
                   />
                 </div>
-                <div className="min-w-0">
-                  <Label
-                    htmlFor={`${baseId}-isf`}
-                    density="stacked"
-                    subtitle="mg/dL por 1 U"
-                  >
-                    FSI
-                  </Label>
-                  <Input
-                    id={`${baseId}-isf`}
-                    type="number"
-                    min={1}
-                    step="any"
-                    value={form.isf_mgdl_per_u}
-                    onChange={(e) =>
-                      setForm((f) =>
-                        f ? { ...f, isf_mgdl_per_u: e.target.value } : f,
-                      )
+                <div className="min-w-0 sm:col-span-2 lg:col-span-2">
+                  <RatioScheduleEditor
+                    idPrefix={`${baseId}-isf`}
+                    label="FSI"
+                    subtitle="mg/dL por 1 U · faixas por horário"
+                    valuePlaceholder="mg/dL / U"
+                    segments={form.isf_schedule}
+                    onChange={(isf_schedule) =>
+                      setForm((f) => (f ? { ...f, isf_schedule } : f))
                     }
-                    className="mt-1.5 font-semibold"
-                    required
                   />
                 </div>
-                <div className="min-w-0">
-                  <Label
-                    htmlFor={`${baseId}-ic`}
-                    density="stacked"
-                    subtitle="g de carb por 1 U"
-                  >
-                    I:C
-                  </Label>
-                  <Input
-                    id={`${baseId}-ic`}
-                    type="number"
-                    min={1}
-                    step="any"
-                    value={form.ic_ratio}
-                    onChange={(e) =>
-                      setForm((f) =>
-                        f ? { ...f, ic_ratio: e.target.value } : f,
-                      )
+                <div className="min-w-0 sm:col-span-2 lg:col-span-2">
+                  <RatioScheduleEditor
+                    idPrefix={`${baseId}-ic`}
+                    label="I:C"
+                    subtitle="g de carb por 1 U · faixas por horário"
+                    valuePlaceholder="g / 1 U"
+                    segments={form.ic_schedule}
+                    onChange={(ic_schedule) =>
+                      setForm((f) => (f ? { ...f, ic_schedule } : f))
                     }
-                    className="mt-1.5 font-semibold"
-                    required
                   />
                 </div>
                 <div className="min-w-0 sm:col-span-2 lg:col-span-2">
