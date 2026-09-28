@@ -22,6 +22,12 @@ export type HistoryAiAchado = {
   evidencia: string
 }
 
+export type HistoryAiPrioridade = {
+  titulo: string
+  porque: string
+  o_que_fazer: string
+}
+
 export type HistoryAiSugestao = {
   parametro: string
   observacao: string
@@ -30,9 +36,18 @@ export type HistoryAiSugestao = {
 
 export type HistoryAiAnalysis = {
   resumo: string
+  prioridades?: HistoryAiPrioridade[]
   achados: HistoryAiAchado[]
   sugestoes_prescricao: HistoryAiSugestao[]
   disclaimer: string
+}
+
+export type HistoryAiWindowStats = {
+  count: number
+  avgGlucose: number | null
+  inRange70_180Percent: number | null
+  hypoCount: number
+  severeHypoCount: number
 }
 
 export type HistoryAiStats = {
@@ -52,6 +67,16 @@ export type HistoryAiStats = {
   avgRecommendedU: number | null
   avgDoseDeltaU: number | null
   avgCarbsG: number | null
+  severeHypoCount?: number
+  severeHypoPercent?: number | null
+  veryHighCount?: number
+  veryHighPercent?: number | null
+  day?: HistoryAiWindowStats
+  night?: HistoryAiWindowStats
+  doseGapCount?: number
+  doseGapPercent?: number | null
+  appliedLessCount?: number
+  appliedMoreCount?: number
 }
 
 export type AnalyzePatientHistoryResult = {

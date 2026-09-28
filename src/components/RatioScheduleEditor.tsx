@@ -13,6 +13,7 @@ type Props = {
   valuePlaceholder: string
   segments: RatioSegment[]
   onChange: (next: RatioSegment[]) => void
+  title?: string
 }
 
 function emptySegment(startMinute: number): RatioSegment {
@@ -26,6 +27,7 @@ export function RatioScheduleEditor({
   valuePlaceholder,
   segments,
   onChange,
+  title,
 }: Props) {
   const rows =
     segments.length > 0 ? segments : [emptySegment(0)]
@@ -57,8 +59,8 @@ export function RatioScheduleEditor({
   }
 
   return (
-    <div className="min-w-0 sm:col-span-2 lg:col-span-2">
-      <p className="text-sm font-semibold text-ink">{label}</p>
+    <div className="min-w-0">
+      <p className="text-sm font-semibold text-ink">{title ?? label}</p>
       <p className="mt-0.5 text-xs text-muted">{subtitle}</p>
       <div className="mt-2 space-y-2">
         {rows.map((row, index) => {

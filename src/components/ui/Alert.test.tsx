@@ -13,6 +13,9 @@ describe('Alert', () => {
 
     rerender(<Alert variant="info">Info</Alert>)
     expect(screen.getByRole('alert')).toHaveClass('text-brand-dark')
+
+    rerender(<Alert variant="warning">Aviso</Alert>)
+    expect(screen.getByRole('alert')).toHaveClass('text-warning')
   })
 
   it('calls onDismiss when Fechar is clicked', async () => {

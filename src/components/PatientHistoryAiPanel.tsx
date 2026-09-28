@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
+import { useAuth } from '../contexts/AuthContext'
 import { Alert } from './ui/Alert'
 import { Button } from './ui/Button'
 import { Card } from './ui/Card'
@@ -10,15 +12,18 @@ import {
   mapSugestaoToProfilePatch,
   type AnalyzePatientHistoryResult,
   type HistoryAiAchado,
+  type HistoryAiAnalysis,
   type HistoryAiSeveridade,
+  type HistoryAiStats,
   type HistoryAiSugestao,
+  type HistoryAiWindowStats,
   type SavedAiAnalysis,
 } from '../lib/analyzeHistoryApi'
 import {
   HISTORY_PERIOD_LABELS,
   type HistoryPeriod,
 } from '../lib/historyPeriod'
-import type { Profile } from '../types/database'
+import { isDoctorSupporter, type Profile } from '../types/database'
 import { formatBrazilDateTime } from '../lib/format'
 
 const TIPO_LABEL: Record<HistoryAiAchado['tipo'], string> = {
@@ -34,6 +39,71 @@ const SEVERIDADE_CLASS: Record<HistoryAiSeveridade, string> = {
   baixa: 'bg-brand-soft text-brand-dark',
 }
 
+function percentLabel(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) return '—'
+  return `${value}%`
+}
+
+function hasClinicalHighlights(
+  stats: HistoryAiStats,
+): stats is HistoryAiStats & {
+  severeHypoCount: number
+  day: HistoryAiWindowStats
+  night: HistoryAiWindowStats
+  doseGapCount: number
+} {
+  return (
+    typeof stats.severeHypoCount === 'number' &&
+    stats.day != null &&
+    stats.night != null &&
+    typeof stats.doseGapCount === 'number'
+  )
+}
+
+function windowLabel(block: HistoryAiWindowStats): string {
+  if (block.count === 0) return 'sem registros'
+  const avg = block.avgGlucose == null ? '—' : `${block.avgGlucose} mg/dL`
+  const hipo = block.hypoCount === 1 ? '1 hipo' : `${block.hypoCount} hipos`
+  return `média ${avg} · 70–180 ${percentLabel(block.inRange70_180Percent)} · ${hipo}`
+}
+
+function ClinicalHighlights({ stats }: { stats: HistoryAiStats }) {
+  if (!hasClinicalHighlights(stats)) return null
+  const gap =
+    stats.doseGapPercent == null
+      ? 'sem pares de dose'
+      : `${percentLabel(stats.doseGapPercent)} · ${stats.appliedLessCount ?? 0} a menos, ${stats.appliedMoreCount ?? 0} a mais`
+
+  const items = [
+    {
+      label: 'Tempo 70–180',
+      value: percentLabel(stats.inRange70_180Percent),
+    },
+    {
+      label: 'Hipo < 54',
+      value: `${stats.severeHypoCount} (${percentLabel(stats.severeHypoPercent)})`,
+    },
+    { label: 'CV', value: percentLabel(stats.glucoseCvPercent) },
+    { label: 'Gap de dose ≥ 2 U', value: gap },
+    { label: 'Dia', value: windowLabel(stats.day) },
+    { label: 'Noite', value: windowLabel(stats.night) },
+  ]
+
+  return (
+    <dl className="grid gap-3 sm:grid-cols-2">
+      {items.map((item) => (
+        <div
+          key={item.label}
+          className="rounded-lg border border-line bg-surface/60 px-3 py-2"
+        >
+          <dt className="text-xs font-medium text-muted">{item.label}</dt>
+          <dd className="mt-0.5 text-sm font-semibold text-ink">{item.value}</dd>
+        </div>
+      ))}
+    </dl>
+  )
+}
+
 type PatientHistoryAiPanelProps = {
   patientId: string
   profile: Profile
@@ -45,6 +115,9 @@ export function PatientHistoryAiPanel({
   profile,
   onApplySuggestion,
 }: PatientHistoryAiPanelProps) {
+  const { doctor } = useAuth()
+  const navigate = useNavigate()
+  const canAnalyze = isDoctorSupporter(doctor)
   const [period, setPeriod] = useState<HistoryPeriod>('days30')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -66,8 +139,9 @@ export function PatientHistoryAiPanel({
   }, [patientId])
 
   useEffect(() => {
+    if (!canAnalyze) return
     void loadHistory()
-  }, [loadHistory])
+  }, [loadHistory, canAnalyze])
 
   async function onAnalyze() {
     setLoading(true)
@@ -110,6 +184,35 @@ export function PatientHistoryAiPanel({
     } finally {
       setApplyingKey(null)
     }
+  }
+
+  function renderPriorities(list: HistoryAiAnalysis['prioridades']) {
+    if (!list || list.length === 0) return null
+    return (
+      <div>
+        <h4 className="text-sm font-semibold text-ink">
+          Prioridades da consulta
+        </h4>
+        <ol className="mt-2 space-y-2">
+          {list.map((item, index) => (
+            <li
+              key={`${item.titulo}-${index}`}
+              className="rounded-lg border border-line bg-surface/50 p-3 text-sm text-ink"
+            >
+              <p className="font-semibold">
+                {index + 1}. {item.titulo}
+              </p>
+              {item.porque && (
+                <p className="mt-1 text-ink/90">{item.porque}</p>
+              )}
+              {item.o_que_fazer && (
+                <p className="mt-1 text-xs text-muted">{item.o_que_fazer}</p>
+              )}
+            </li>
+          ))}
+        </ol>
+      </div>
+    )
   }
 
   function renderSuggestions(list: HistoryAiSugestao[]) {
@@ -157,141 +260,157 @@ export function PatientHistoryAiPanel({
 
   return (
     <Card className="space-y-4">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-        <div className="min-w-0">
-          <h3 className="text-base font-semibold text-ink">Análise com IA</h3>
-          <p className="mt-1 text-sm text-muted">
-            Identifica discrepâncias, irregularidades e possíveis ajustes no
-            período selecionado. Análises ficam salvas para revisitar.
-          </p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <label className="flex items-center gap-2 text-sm text-muted">
-            <span className="whitespace-nowrap">Período</span>
-            <Select
-              value={period}
-              onChange={(e) => setPeriod(e.target.value as HistoryPeriod)}
-              className="w-auto py-2"
-              disabled={loading}
-            >
-              {(Object.keys(HISTORY_PERIOD_LABELS) as HistoryPeriod[]).map(
-                (key) => (
-                  <option key={key} value={key}>
-                    {HISTORY_PERIOD_LABELS[key]}
-                  </option>
-                ),
-              )}
-            </Select>
-          </label>
-          <Button onClick={onAnalyze} disabled={loading} size="sm">
-            {loading ? 'Analisando…' : 'Analisar com IA'}
-          </Button>
-        </div>
+      <div className="min-w-0">
+        <h3 className="text-base font-semibold text-ink">Análise com IA</h3>
+        <p className="mt-1 text-sm text-muted">
+          Resume o risco, o padrão por horário e o que revisar no período
+          selecionado. Análises ficam salvas para revisitar.
+        </p>
       </div>
 
-      {loading && <Spinner label="Analisando histórico…" />}
-
-      {error && (
-        <Alert variant="error" onDismiss={() => setError(null)}>
-          {error}
-        </Alert>
-      )}
-
-      {result && !loading && (
-        <div className="space-y-4 border-t border-line pt-4">
-          <div>
-            <p className="text-sm text-ink">{result.analysis.resumo}</p>
-            <p className="mt-1 text-xs text-muted">
-              {result.entryCount} registro
-              {result.entryCount === 1 ? '' : 's'} ·{' '}
-              {HISTORY_PERIOD_LABELS[result.period]}
-              {result.analysisId ? ' · salva' : ''}
-            </p>
+      {!canAnalyze ? (
+        <div className="space-y-3">
+          <Alert variant="warning">
+            A Análise com IA está disponível para médicos que apoiam o
+            GlicoDose.
+          </Alert>
+          <Button onClick={() => navigate('/apoiar')}>Quero apoiar</Button>
+        </div>
+      ) : (
+        <>
+          <div className="flex flex-wrap items-center gap-2">
+            <label className="flex items-center gap-2 text-sm text-muted">
+              <span className="whitespace-nowrap">Período</span>
+              <Select
+                value={period}
+                onChange={(e) => setPeriod(e.target.value as HistoryPeriod)}
+                className="w-auto py-2"
+                disabled={loading}
+              >
+                {(Object.keys(HISTORY_PERIOD_LABELS) as HistoryPeriod[]).map(
+                  (key) => (
+                    <option key={key} value={key}>
+                      {HISTORY_PERIOD_LABELS[key]}
+                    </option>
+                  ),
+                )}
+              </Select>
+            </label>
+            <Button onClick={onAnalyze} disabled={loading} size="sm">
+              {loading ? 'Analisando…' : 'Analisar com IA'}
+            </Button>
           </div>
 
-          {result.analysis.achados.length > 0 ? (
-            <ul className="space-y-3">
-              {result.analysis.achados.map((achado, index) => (
-                <li
-                  key={`${achado.titulo}-${index}`}
-                  className="rounded-xl border border-line bg-surface/60 p-3.5"
-                >
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span
-                      className={`rounded-md px-2 py-0.5 text-xs font-semibold ${SEVERIDADE_CLASS[achado.severidade]}`}
+          {loading && <Spinner label="Analisando histórico…" />}
+
+          {error && (
+            <Alert variant="error" onDismiss={() => setError(null)}>
+              {error}
+            </Alert>
+          )}
+
+          {result && !loading && (
+            <div className="space-y-4 border-t border-line pt-4">
+              <ClinicalHighlights stats={result.stats} />
+              <div>
+                <p className="text-sm text-ink">{result.analysis.resumo}</p>
+                <p className="mt-1 text-xs text-muted">
+                  {result.entryCount} registro
+                  {result.entryCount === 1 ? '' : 's'} ·{' '}
+                  {HISTORY_PERIOD_LABELS[result.period]}
+                  {result.analysisId ? ' · salva' : ''}
+                </p>
+              </div>
+
+              {renderPriorities(result.analysis.prioridades)}
+
+              {result.analysis.achados.length > 0 ? (
+                <ul className="space-y-3">
+                  {result.analysis.achados.map((achado, index) => (
+                    <li
+                      key={`${achado.titulo}-${index}`}
+                      className="rounded-xl border border-line bg-surface/60 p-3.5"
                     >
-                      {achado.severidade}
-                    </span>
-                    <span className="text-xs font-medium uppercase tracking-wide text-muted">
-                      {TIPO_LABEL[achado.tipo]}
-                    </span>
-                  </div>
-                  <p className="mt-2 text-sm font-semibold text-ink">
-                    {achado.titulo}
-                  </p>
-                  {achado.detalhe && (
-                    <p className="mt-1 text-sm text-ink/90">{achado.detalhe}</p>
-                  )}
-                  {achado.evidencia && (
-                    <p className="mt-2 text-xs text-muted">
-                      Evidência: {achado.evidencia}
-                    </p>
-                  )}
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p className="text-sm text-muted">
-              Nenhum achado relevante no período.
-            </p>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span
+                          className={`rounded-md px-2 py-0.5 text-xs font-semibold ${SEVERIDADE_CLASS[achado.severidade]}`}
+                        >
+                          {achado.severidade}
+                        </span>
+                        <span className="text-xs font-medium uppercase tracking-wide text-muted">
+                          {TIPO_LABEL[achado.tipo]}
+                        </span>
+                      </div>
+                      <p className="mt-2 text-sm font-semibold text-ink">
+                        {achado.titulo}
+                      </p>
+                      {achado.detalhe && (
+                        <p className="mt-1 text-sm text-ink/90">{achado.detalhe}</p>
+                      )}
+                      {achado.evidencia && (
+                        <p className="mt-2 text-xs text-muted">
+                          Evidência: {achado.evidencia}
+                        </p>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="text-sm text-muted">
+                  Nenhum achado relevante no período.
+                </p>
+              )}
+
+              {renderSuggestions(result.analysis.sugestoes_prescricao)}
+
+              {result.analysis.disclaimer && (
+                <Alert variant="info">{result.analysis.disclaimer}</Alert>
+              )}
+            </div>
           )}
 
-          {renderSuggestions(result.analysis.sugestoes_prescricao)}
-
-          {result.analysis.disclaimer && (
-            <Alert variant="info">{result.analysis.disclaimer}</Alert>
-          )}
-        </div>
+          <div className="border-t border-line pt-4">
+            <h4 className="text-sm font-semibold text-ink">Análises anteriores</h4>
+            {historyLoading ? (
+              <p className="mt-2 text-sm text-muted">Carregando…</p>
+            ) : history.length === 0 ? (
+              <p className="mt-2 text-sm text-muted">
+                Nenhuma análise salva ainda.
+              </p>
+            ) : (
+              <ul className="mt-2 space-y-2">
+                {history.map((row) => (
+                  <li key={row.id}>
+                    <button
+                      type="button"
+                      className="w-full rounded-lg border border-line px-3 py-2 text-left text-sm transition hover:border-brand/40 hover:bg-brand-softer/40"
+                      onClick={() =>
+                        setResult({
+                          period: (row.period as HistoryPeriod) || 'days30',
+                          entryCount: row.entry_count,
+                          stats: row.stats as AnalyzePatientHistoryResult['stats'],
+                          analysis: row.analysis,
+                          analysisId: row.id,
+                        })
+                      }
+                    >
+                      <span className="font-medium text-ink">
+                        {HISTORY_PERIOD_LABELS[
+                          row.period as HistoryPeriod
+                        ] ?? row.period}{' '}
+                        · {row.entry_count} registros
+                      </span>
+                      <span className="mt-0.5 block text-xs text-muted">
+                        {formatBrazilDateTime(row.created_at)}
+                      </span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </>
       )}
-
-      <div className="border-t border-line pt-4">
-        <h4 className="text-sm font-semibold text-ink">Análises anteriores</h4>
-        {historyLoading ? (
-          <p className="mt-2 text-sm text-muted">Carregando…</p>
-        ) : history.length === 0 ? (
-          <p className="mt-2 text-sm text-muted">Nenhuma análise salva ainda.</p>
-        ) : (
-          <ul className="mt-2 space-y-2">
-            {history.map((row) => (
-              <li key={row.id}>
-                <button
-                  type="button"
-                  className="w-full rounded-lg border border-line px-3 py-2 text-left text-sm transition hover:border-brand/40 hover:bg-brand-softer/40"
-                  onClick={() =>
-                    setResult({
-                      period: (row.period as HistoryPeriod) || 'days30',
-                      entryCount: row.entry_count,
-                      stats: row.stats as AnalyzePatientHistoryResult['stats'],
-                      analysis: row.analysis,
-                      analysisId: row.id,
-                    })
-                  }
-                >
-                  <span className="font-medium text-ink">
-                    {HISTORY_PERIOD_LABELS[
-                      row.period as HistoryPeriod
-                    ] ?? row.period}{' '}
-                    · {row.entry_count} registros
-                  </span>
-                  <span className="mt-0.5 block text-xs text-muted">
-                    {formatBrazilDateTime(row.created_at)}
-                  </span>
-                </button>
-              </li>
-            ))}
-          </ul>
-        )}
-      </div>
     </Card>
   )
 }

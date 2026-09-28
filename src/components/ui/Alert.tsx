@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react'
 
-type AlertVariant = 'error' | 'success' | 'info'
+type AlertVariant = 'error' | 'success' | 'info' | 'warning'
 
 type AlertProps = {
   variant?: AlertVariant
@@ -13,6 +13,7 @@ const variantClass: Record<AlertVariant, string> = {
   error: 'bg-danger-soft text-danger',
   success: 'bg-ok-soft text-ok',
   info: 'bg-brand-soft text-brand-dark',
+  warning: 'bg-warning-soft text-warning',
 }
 
 export function Alert({

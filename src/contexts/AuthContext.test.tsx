@@ -11,11 +11,15 @@ const signUp = vi.fn()
 const signOut = vi.fn()
 const onAuthStateChange = vi.fn()
 const fromMock = vi.fn()
+const invokeMock = vi.fn()
 const unsubscribe = vi.fn()
 
 vi.mock('../lib/supabase', () => ({
   supabase: {
     from: (...args: unknown[]) => fromMock(...args),
+    functions: {
+      invoke: (...args: unknown[]) => invokeMock(...args),
+    },
     auth: {
       getSession: (...args: unknown[]) => getSession(...args),
       getUser: (...args: unknown[]) => getUser(...args),
@@ -65,6 +69,8 @@ describe('AuthContext', () => {
     signUp.mockReset()
     signOut.mockReset()
     fromMock.mockReset()
+    invokeMock.mockReset()
+    invokeMock.mockResolvedValue({ data: null, error: null })
     unsubscribe.mockReset()
     authCallback = () => {}
     onAuthStateChange.mockImplementation((cb) => {
@@ -102,6 +108,54 @@ describe('AuthContext', () => {
     )
     expect(screen.getByTestId('doctor')).toHaveTextContent('Dr. Teste')
     expect(screen.getByTestId('user')).toHaveTextContent('doctor-1')
+    expect(invokeMock).toHaveBeenCalledWith('sync-doctor-supporter')
+  })
+
+  it('applies the supporter sync result and skips it when already a supporter', async () => {
+    const session = makeSession()
+    getSession.mockResolvedValue({ data: { session } })
+    fromMock.mockReturnValue(
+      createQueryBuilder({ data: makeDoctor(), error: null }),
+    )
+    invokeMock.mockResolvedValue({
+      data: {
+        doctor: makeDoctor({
+          full_name: 'Dr. Apoiador',
+          supporter_status: 'active',
+        }),
+      },
+      error: null,
+    })
+
+    const view = render(
+      <AuthProvider>
+        <Probe />
+      </AuthProvider>,
+    )
+
+    await waitFor(() =>
+      expect(screen.getByTestId('doctor')).toHaveTextContent('Dr. Apoiador'),
+    )
+
+    view.unmount()
+    invokeMock.mockClear()
+    getSession.mockResolvedValue({ data: { session } })
+    fromMock.mockReturnValue(
+      createQueryBuilder({
+        data: makeDoctor({ supporter_status: 'active' }),
+        error: null,
+      }),
+    )
+
+    render(
+      <AuthProvider>
+        <Probe />
+      </AuthProvider>,
+    )
+    await waitFor(() =>
+      expect(screen.getByTestId('doctor')).toHaveTextContent('Dr. Teste'),
+    )
+    expect(invokeMock).not.toHaveBeenCalled()
   })
 
   it('sets doctor null when fetch fails', async () => {

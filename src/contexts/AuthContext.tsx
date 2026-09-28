@@ -9,7 +9,7 @@ import {
 } from 'react'
 import type { Session, User } from '@supabase/supabase-js'
 import { supabase } from '../lib/supabase'
-import type { Doctor } from '../types/database'
+import { isDoctorSupporter, type Doctor } from '../types/database'
 
 type AuthContextValue = {
   session: Session | null
@@ -35,6 +35,26 @@ async function fetchDoctor(userId: string): Promise<Doctor | null> {
   return data as Doctor | null
 }
 
+async function syncSupporterIfNeeded(
+  doctor: Doctor | null,
+): Promise<Doctor | null> {
+  if (!doctor || isDoctorSupporter(doctor)) return doctor
+  try {
+    const { data, error } = await supabase.functions.invoke(
+      'sync-doctor-supporter',
+    )
+    if (error) return doctor
+    const synced = (data as { doctor?: Doctor } | null)?.doctor
+    return synced ?? doctor
+  } catch {
+    return doctor
+  }
+}
+
+async function loadDoctor(userId: string): Promise<Doctor | null> {
+  return syncSupporterIfNeeded(await fetchDoctor(userId))
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null)
   const [doctor, setDoctor] = useState<Doctor | null>(null)
@@ -46,7 +66,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setDoctor(null)
       return
     }
-    setDoctor(await fetchDoctor(userId))
+    setDoctor(await loadDoctor(userId))
   }, [])
 
   useEffect(() => {
@@ -57,7 +77,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setSession(data.session)
       if (data.session?.user) {
         try {
-          setDoctor(await fetchDoctor(data.session.user.id))
+          setDoctor(await loadDoctor(data.session.user.id))
         } catch {
           setDoctor(null)
         }
@@ -70,7 +90,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setSession(nextSession)
         if (nextSession?.user) {
           try {
-            setDoctor(await fetchDoctor(nextSession.user.id))
+            setDoctor(await loadDoctor(nextSession.user.id))
           } catch {
             setDoctor(null)
           }
@@ -110,7 +130,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       })
       if (doctorError) throw doctorError
 
-      setDoctor(await fetchDoctor(userId))
+      setDoctor(await loadDoctor(userId))
     },
     [],
   )

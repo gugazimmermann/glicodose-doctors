@@ -7,27 +7,21 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.49.1'
 import Stripe from 'https://esm.sh/stripe@17.5.0?target=deno'
 import { corsHeaders, jsonResponse } from '../_shared/cors.ts'
-import { priceIdToPlanKey, type SupportPlanKey } from '../_shared/supportPlans.ts'
+import {
+  statusFromStripeSubscription,
+  subscriptionKeepsCustomer,
+} from '../_shared/supporterLink.ts'
+import { isSupportPlanKey, priceIdToPlanKey, type SupportPlanKey } from '../_shared/supportPlans.ts'
 
 type SupporterStatus = 'none' | 'active' | 'grace' | 'expired' | 'canceled'
 
 function statusFromSubscription(
   subscription: Stripe.Subscription,
 ): SupporterStatus {
-  switch (subscription.status) {
-    case 'active':
-    case 'trialing':
-      return 'active'
-    case 'past_due':
-    case 'unpaid':
-      return 'grace'
-    case 'canceled':
-      return subscription.cancel_at_period_end ? 'canceled' : 'canceled'
-    case 'incomplete_expired':
-      return 'expired'
-    default:
-      return subscription.cancel_at_period_end ? 'canceled' : 'active'
-  }
+  return statusFromStripeSubscription(
+    subscription.status,
+    subscription.cancel_at_period_end,
+  )
 }
 
 function planFromSubscription(
@@ -190,6 +184,61 @@ Deno.serve(async (req) => {
       }
     }
 
+    async function customerKeepsDoctor(customerId: string): Promise<boolean> {
+      const listed = await stripe.subscriptions.list({
+        customer: customerId,
+        status: 'all',
+        limit: 10,
+      })
+      return listed.data.some((sub) => subscriptionKeepsCustomer(sub.status))
+    }
+
+    async function linkDoctorByEmail(input: {
+      email: string | null | undefined
+      customerId: string
+      status: SupporterStatus
+      plan: SupportPlanKey | null
+      expiresAt: string | null
+    }) {
+      const email = input.email?.trim()
+      if (!email) return
+
+      const { data: doctorId, error } = await admin.rpc('doctor_id_by_email', {
+        p_email: email,
+      })
+      if (error) {
+        console.error('doctor_id_by_email failed', error.message)
+        return
+      }
+      if (!doctorId) return
+
+      const { data: doctor, error: doctorError } = await admin
+        .from('doctors')
+        .select('id, stripe_customer_id')
+        .eq('id', doctorId)
+        .maybeSingle()
+      if (doctorError || !doctor) {
+        if (doctorError) {
+          console.error('doctor lookup for email link failed', doctorError.message)
+        }
+        return
+      }
+
+      const saved = (doctor.stripe_customer_id as string | null) ?? null
+      if (saved && saved !== input.customerId) {
+        const keeps = await customerKeepsDoctor(saved)
+        if (keeps) return
+      }
+
+      const patch: Record<string, unknown> = {
+        supporter_status: input.status,
+        stripe_customer_id: input.customerId,
+        supporter_expires_at: input.expiresAt,
+      }
+      if (input.plan) patch.supporter_product_id = input.plan
+      await updateDoctor(doctorId as string, patch)
+    }
+
     async function handleMarketingSiteSubscription(
       subscription: Stripe.Subscription,
       statusOverride?: SupporterStatus,
@@ -209,6 +258,15 @@ Deno.serve(async (req) => {
         supporter_product_id: plan,
         supporter_status: statusOverride ?? statusFromSubscription(subscription),
         supporter_expires_at: new Date(
+          subscription.current_period_end * 1000,
+        ).toISOString(),
+      })
+      await linkDoctorByEmail({
+        email: details.email,
+        customerId,
+        status: statusOverride ?? statusFromSubscription(subscription),
+        plan,
+        expiresAt: new Date(
           subscription.current_period_end * 1000,
         ).toISOString(),
       })
@@ -301,10 +359,46 @@ Deno.serve(async (req) => {
             supporter_status: status,
             supporter_expires_at: expiresAt,
           })
+          await linkDoctorByEmail({
+            email: fromSession.email ?? fromCustomer.email,
+            customerId,
+            status,
+            plan: resolvedPlan,
+            expiresAt,
+          })
           break
         }
 
         console.log('checkout.session.completed without doctor_id or site source')
+        const fallbackCustomerId =
+          typeof session.customer === 'string' ? session.customer : null
+        if (fallbackCustomerId) {
+          const fallbackDetails = await loadCustomerDetails(fallbackCustomerId)
+          let fallbackStatus: SupporterStatus = 'active'
+          let fallbackExpires: string | null = null
+          const rawPlan = session.metadata?.support_plan
+          let fallbackPlan: SupportPlanKey | null =
+            rawPlan && isSupportPlanKey(rawPlan) ? rawPlan : null
+          if (typeof session.subscription === 'string') {
+            const sub = await stripe.subscriptions.retrieve(session.subscription)
+            fallbackStatus = statusFromSubscription(sub)
+            fallbackExpires = new Date(
+              sub.current_period_end * 1000,
+            ).toISOString()
+            const subPlan = planFromSubscription(sub)
+            if (subPlan) fallbackPlan = subPlan
+          }
+          await linkDoctorByEmail({
+            email:
+              session.customer_details?.email ??
+              session.customer_email ??
+              fallbackDetails.email,
+            customerId: fallbackCustomerId,
+            status: fallbackStatus,
+            plan: fallbackPlan,
+            expiresAt: fallbackExpires,
+          })
+        }
         break
       }
 
@@ -326,25 +420,35 @@ Deno.serve(async (req) => {
           doctorId = await resolveDoctorIdFromCustomer(subscription.customer)
         }
         if (!doctorId) {
-          // Subscription may be marketing-site without metadata on older records —
-          // try public_supporters by customer id before giving up.
           const customerId = customerIdOf(subscription.customer)
+          const status: SupporterStatus =
+            event.type === 'customer.subscription.deleted'
+              ? 'expired'
+              : statusFromSubscription(subscription)
           if (customerId) {
+            const details = await loadCustomerDetails(customerId)
+            await linkDoctorByEmail({
+              email: details.email,
+              customerId,
+              status,
+              plan: planFromSubscription(subscription),
+              expiresAt: new Date(
+                subscription.current_period_end * 1000,
+              ).toISOString(),
+            })
             const { data: existing } = await admin
               .from('public_supporters')
               .select('id')
               .eq('stripe_customer_id', customerId)
               .maybeSingle()
             if (existing) {
-              const status: SupporterStatus =
-                event.type === 'customer.subscription.deleted'
-                  ? 'expired'
-                  : statusFromSubscription(subscription)
               await handleMarketingSiteSubscription(subscription, status)
-              break
             }
+            break
           }
-          console.log(`${event.type} without resolvable doctor_id or site supporter`)
+          console.log(
+            `${event.type} without resolvable doctor_id or site supporter`,
+          )
           break
         }
 

@@ -536,7 +536,7 @@ export function PatientDetailPage() {
             onSubmit={onSavePrescription}
             className="mt-4"
           >
-            <Card className="space-y-5">
+            <Card className="space-y-8">
               <div>
                 <h2 className="text-base font-semibold text-ink">Prescrição</h2>
                 <p className="mt-1 text-sm text-muted">
@@ -544,57 +544,190 @@ export function PatientDetailPage() {
                 </p>
               </div>
 
-              <div className="grid min-w-0 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                <div className="min-w-0">
-                  <Label
-                    htmlFor={`${baseId}-target-day`}
-                    density="stacked"
-                    subtitle="mg/dL"
-                  >
-                    Meta dia
-                  </Label>
-                  <Input
-                    id={`${baseId}-target-day`}
-                    type="number"
-                    min={1}
-                    step="any"
-                    value={form.target_glucose_mgdl}
-                    onChange={(e) =>
-                      setForm((f) =>
-                        f ? { ...f, target_glucose_mgdl: e.target.value } : f,
-                      )
-                    }
-                    className="mt-1.5 font-semibold"
-                    required
-                  />
+              <fieldset className="min-w-0 space-y-4">
+                <legend className="text-sm font-semibold uppercase tracking-wide text-muted">
+                  Metas de glicemia
+                </legend>
+                <p className="text-sm text-muted">
+                  A janela da noite define qual meta vale em cada horário.
+                </p>
+                <div className="grid min-w-0 gap-4 sm:grid-cols-2">
+                  <div className="min-w-0">
+                    <Label
+                      htmlFor={`${baseId}-target-day`}
+                      density="stacked"
+                      subtitle="mg/dL"
+                    >
+                      Meta dia
+                    </Label>
+                    <Input
+                      id={`${baseId}-target-day`}
+                      type="number"
+                      min={1}
+                      step="any"
+                      value={form.target_glucose_mgdl}
+                      onChange={(e) =>
+                        setForm((f) =>
+                          f ? { ...f, target_glucose_mgdl: e.target.value } : f,
+                        )
+                      }
+                      className="mt-1.5 font-semibold"
+                      required
+                    />
+                  </div>
+                  <div className="min-w-0">
+                    <Label
+                      htmlFor={`${baseId}-target-night`}
+                      density="stacked"
+                      subtitle="mg/dL"
+                    >
+                      Meta noite
+                    </Label>
+                    <Input
+                      id={`${baseId}-target-night`}
+                      type="number"
+                      min={1}
+                      step="any"
+                      value={form.target_night_mgdl}
+                      onChange={(e) =>
+                        setForm((f) =>
+                          f ? { ...f, target_night_mgdl: e.target.value } : f,
+                        )
+                      }
+                      className="mt-1.5 font-semibold"
+                      required
+                    />
+                  </div>
+                  <div className="min-w-0">
+                    <Label
+                      htmlFor={`${baseId}-night-start`}
+                      density="stacked"
+                      subtitle="HH:MM"
+                    >
+                      Início da noite
+                    </Label>
+                    <Input
+                      id={`${baseId}-night-start`}
+                      type="text"
+                      inputMode="numeric"
+                      placeholder="20:00"
+                      value={form.night_start}
+                      onChange={(e) =>
+                        setForm((f) =>
+                          f ? { ...f, night_start: e.target.value } : f,
+                        )
+                      }
+                      className="mt-1.5 font-semibold"
+                      required
+                    />
+                  </div>
+                  <div className="min-w-0">
+                    <Label
+                      htmlFor={`${baseId}-night-end`}
+                      density="stacked"
+                      subtitle="HH:MM"
+                    >
+                      Fim da noite
+                    </Label>
+                    <Input
+                      id={`${baseId}-night-end`}
+                      type="text"
+                      inputMode="numeric"
+                      placeholder="05:59"
+                      value={form.night_end}
+                      onChange={(e) =>
+                        setForm((f) =>
+                          f ? { ...f, night_end: e.target.value } : f,
+                        )
+                      }
+                      className="mt-1.5 font-semibold"
+                      required
+                    />
+                  </div>
                 </div>
-                <div className="min-w-0">
-                  <Label
-                    htmlFor={`${baseId}-target-night`}
-                    density="stacked"
-                    subtitle="mg/dL"
-                  >
-                    Meta noite
-                  </Label>
-                  <Input
-                    id={`${baseId}-target-night`}
-                    type="number"
-                    min={1}
-                    step="any"
-                    value={form.target_night_mgdl}
-                    onChange={(e) =>
-                      setForm((f) =>
-                        f ? { ...f, target_night_mgdl: e.target.value } : f,
-                      )
-                    }
-                    className="mt-1.5 font-semibold"
-                    required
-                  />
+              </fieldset>
+
+              <fieldset className="min-w-0 space-y-4">
+                <legend className="text-sm font-semibold uppercase tracking-wide text-muted">
+                  Insulina rápida (bolus)
+                </legend>
+                <div className="grid min-w-0 gap-4 sm:grid-cols-3">
+                  <div className="min-w-0">
+                    <Label
+                      htmlFor={`${baseId}-insulin`}
+                      density="stacked"
+                      subtitle="Nome comercial"
+                    >
+                      Insulina rápida
+                    </Label>
+                    <Input
+                      id={`${baseId}-insulin`}
+                      type="text"
+                      value={form.rapid_insulin_name}
+                      onChange={(e) =>
+                        setForm((f) =>
+                          f ? { ...f, rapid_insulin_name: e.target.value } : f,
+                        )
+                      }
+                      className="mt-1.5 font-semibold"
+                      required
+                    />
+                  </div>
+                  <div className="min-w-0">
+                    <Label
+                      htmlFor={`${baseId}-dose-step`}
+                      density="stacked"
+                      subtitle="U (ex.: 0,5 ou 1)"
+                    >
+                      Passo da dose
+                    </Label>
+                    <Input
+                      id={`${baseId}-dose-step`}
+                      type="number"
+                      min={0.1}
+                      step="any"
+                      value={form.dose_step}
+                      onChange={(e) =>
+                        setForm((f) =>
+                          f ? { ...f, dose_step: e.target.value } : f,
+                        )
+                      }
+                      className="mt-1.5 font-semibold"
+                      required
+                    />
+                  </div>
+                  <div className="min-w-0">
+                    <Label
+                      htmlFor={`${baseId}-duration`}
+                      density="stacked"
+                      subtitle="Horas (IOB)"
+                    >
+                      Duração da insulina
+                    </Label>
+                    <Input
+                      id={`${baseId}-duration`}
+                      type="number"
+                      min={1}
+                      max={8}
+                      step="any"
+                      value={form.insulin_duration_hours}
+                      onChange={(e) =>
+                        setForm((f) =>
+                          f
+                            ? { ...f, insulin_duration_hours: e.target.value }
+                            : f,
+                        )
+                      }
+                      className="mt-1.5 font-semibold"
+                      required
+                    />
+                  </div>
                 </div>
-                <div className="min-w-0 sm:col-span-2 lg:col-span-2">
+                <div className="space-y-5">
                   <RatioScheduleEditor
                     idPrefix={`${baseId}-isf`}
                     label="FSI"
+                    title="Fator de sensibilidade (FSI)"
                     subtitle="mg/dL por 1 U · faixas por horário"
                     valuePlaceholder="mg/dL / U"
                     segments={form.isf_schedule}
@@ -602,11 +735,10 @@ export function PatientDetailPage() {
                       setForm((f) => (f ? { ...f, isf_schedule } : f))
                     }
                   />
-                </div>
-                <div className="min-w-0 sm:col-span-2 lg:col-span-2">
                   <RatioScheduleEditor
                     idPrefix={`${baseId}-ic`}
                     label="I:C"
+                    title="Relação insulina:carboidrato (I:C)"
                     subtitle="g de carb por 1 U · faixas por horário"
                     valuePlaceholder="g / 1 U"
                     segments={form.ic_schedule}
@@ -615,133 +747,15 @@ export function PatientDetailPage() {
                     }
                   />
                 </div>
-                <div className="min-w-0 sm:col-span-2 lg:col-span-2">
-                  <Label
-                    htmlFor={`${baseId}-insulin`}
-                    density="stacked"
-                    subtitle="Nome comercial"
-                  >
-                    Insulina rápida
-                  </Label>
-                  <Input
-                    id={`${baseId}-insulin`}
-                    type="text"
-                    value={form.rapid_insulin_name}
-                    onChange={(e) =>
-                      setForm((f) =>
-                        f ? { ...f, rapid_insulin_name: e.target.value } : f,
-                      )
-                    }
-                    className="mt-1.5 font-semibold"
-                    required
-                  />
-                </div>
-                <div className="min-w-0">
-                  <Label
-                    htmlFor={`${baseId}-dose-step`}
-                    density="stacked"
-                    subtitle="U (ex.: 0,5 ou 1)"
-                  >
-                    Passo da dose
-                  </Label>
-                  <Input
-                    id={`${baseId}-dose-step`}
-                    type="number"
-                    min={0.1}
-                    step="any"
-                    value={form.dose_step}
-                    onChange={(e) =>
-                      setForm((f) =>
-                        f ? { ...f, dose_step: e.target.value } : f,
-                      )
-                    }
-                    className="mt-1.5 font-semibold"
-                    required
-                  />
-                </div>
-                <div className="min-w-0">
-                  <Label
-                    htmlFor={`${baseId}-duration`}
-                    density="stacked"
-                    subtitle="Horas (IOB)"
-                  >
-                    Duração da insulina
-                  </Label>
-                  <Input
-                    id={`${baseId}-duration`}
-                    type="number"
-                    min={1}
-                    max={8}
-                    step="any"
-                    value={form.insulin_duration_hours}
-                    onChange={(e) =>
-                      setForm((f) =>
-                        f
-                          ? { ...f, insulin_duration_hours: e.target.value }
-                          : f,
-                      )
-                    }
-                    className="mt-1.5 font-semibold"
-                    required
-                  />
-                </div>
-                <div className="min-w-0">
-                  <Label
-                    htmlFor={`${baseId}-night-start`}
-                    density="stacked"
-                    subtitle="HH:MM"
-                  >
-                    Início da noite
-                  </Label>
-                  <Input
-                    id={`${baseId}-night-start`}
-                    type="text"
-                    inputMode="numeric"
-                    placeholder="20:00"
-                    value={form.night_start}
-                    onChange={(e) =>
-                      setForm((f) =>
-                        f ? { ...f, night_start: e.target.value } : f,
-                      )
-                    }
-                    className="mt-1.5 font-semibold"
-                    required
-                  />
-                </div>
-                <div className="min-w-0">
-                  <Label
-                    htmlFor={`${baseId}-night-end`}
-                    density="stacked"
-                    subtitle="HH:MM"
-                  >
-                    Fim da noite
-                  </Label>
-                  <Input
-                    id={`${baseId}-night-end`}
-                    type="text"
-                    inputMode="numeric"
-                    placeholder="05:59"
-                    value={form.night_end}
-                    onChange={(e) =>
-                      setForm((f) =>
-                        f ? { ...f, night_end: e.target.value } : f,
-                      )
-                    }
-                    className="mt-1.5 font-semibold"
-                    required
-                  />
-                </div>
-              </div>
+              </fieldset>
 
-              <div className="space-y-4 border-t border-line pt-5">
-                <div>
-                  <h3 className="text-sm font-semibold text-ink">
-                    Insulina basal
-                  </h3>
-                  <p className="mt-1 text-sm text-muted">
-                    Nome, dose padrão e até 2 horários do perfil do paciente.
-                  </p>
-                </div>
+              <fieldset className="min-w-0 space-y-4">
+                <legend className="text-sm font-semibold uppercase tracking-wide text-muted">
+                  Insulina basal
+                </legend>
+                <p className="text-sm text-muted">
+                  Nome, dose padrão e até 2 horários do perfil do paciente.
+                </p>
                 <div className="grid min-w-0 gap-4 sm:grid-cols-2 lg:grid-cols-3">
                   <div className="min-w-0 sm:col-span-2 lg:col-span-2">
                     <Label
@@ -858,7 +872,7 @@ export function PatientDetailPage() {
                     </Button>
                   )}
                 </div>
-              </div>
+              </fieldset>
 
               {saveError && (
                 <Alert variant="error" onDismiss={() => setSaveError(null)}>

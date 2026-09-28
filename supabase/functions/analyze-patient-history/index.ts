@@ -4,11 +4,13 @@
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.49.1'
 import { corsHeaders, jsonResponse } from '../_shared/cors.ts'
+import {
+  carbsFromEntry,
+  computeHistoryAiStats,
+  type HistoryAiEntry,
+} from '../_shared/historyAiMetrics.ts'
 
 const ENTRY_CAP = 120
-const CLINICAL_LOW = 70
-const CLINICAL_HIGH = 180
-const TARGET_TOLERANCE = 0.2
 
 type Period = 'days7' | 'days30' | 'all'
 
@@ -27,6 +29,9 @@ type ProfileRow = {
   rapid_insulin_name: string | null
   dose_step: number | null
   insulin_duration_hours: number | null
+  basal_insulin_name: string | null
+  basal_dose_u: number | null
+  basal_times_minutes: unknown
 }
 
 function summarizeSchedule(raw: unknown, scalar: number | null): string {
@@ -59,33 +64,9 @@ function summarizeSchedule(raw: unknown, scalar: number | null): string {
   return parts.join('; ') || (scalar != null ? String(scalar) : '—')
 }
 
-type EntryRow = {
+type EntryRow = HistoryAiEntry & {
   id: string
-  recorded_at: string
-  glucose_mgdl: number
   food_text: string | null
-  recommended_insulin: number | null
-  applied_insulin: number | null
-  gpt_raw_response: unknown
-}
-
-type HistoryStats = {
-  count: number
-  avgGlucose: number | null
-  minGlucose: number | null
-  maxGlucose: number | null
-  glucoseSd: number | null
-  glucoseCvPercent: number | null
-  inRange70_180Percent: number | null
-  hypoPercent: number | null
-  hypoCount: number
-  hyperPercent: number | null
-  hyperCount: number
-  inTargetPercent: number | null
-  avgAppliedU: number | null
-  avgRecommendedU: number | null
-  avgDoseDeltaU: number | null
-  avgCarbsG: number | null
 }
 
 function periodSince(period: Period, now = new Date()): Date | null {
@@ -99,171 +80,27 @@ function periodSince(period: Period, now = new Date()): Date | null {
   }
 }
 
-function isNightWindow(
-  minuteOfDay: number,
-  nightStart: number,
-  nightEnd: number,
-): boolean {
-  if (nightStart === nightEnd) return false
-  if (nightStart < nightEnd) {
-    return minuteOfDay >= nightStart && minuteOfDay <= nightEnd
-  }
-  return minuteOfDay >= nightStart || minuteOfDay <= nightEnd
+function formatClockMinute(raw: number | null, fallback: number): string {
+  const source = raw != null && Number.isFinite(raw) ? raw : fallback
+  const minute = ((Math.round(source) % 1440) + 1440) % 1440
+  const h = String(Math.floor(minute / 60)).padStart(2, '0')
+  const min = String(minute % 60).padStart(2, '0')
+  return `${h}:${min}`
 }
 
-function brazilMinuteOfDay(iso: string): number {
-  const parts = new Intl.DateTimeFormat('en-GB', {
-    timeZone: 'America/Sao_Paulo',
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-  }).formatToParts(new Date(iso))
-  const hour = Number(parts.find((p) => p.type === 'hour')?.value ?? 0)
-  const minute = Number(parts.find((p) => p.type === 'minute')?.value ?? 0)
-  const h = hour === 24 ? 0 : hour
-  return h * 60 + minute
-}
-
-function resolveTarget(profile: ProfileRow, recordedAt: string): number {
-  const night = isNightWindow(
-    brazilMinuteOfDay(recordedAt),
-    Number(profile.night_start_minute ?? 1200),
-    Number(profile.night_end_minute ?? 359),
-  )
-  const day = profile.target_glucose_mgdl ?? 110
-  const nightTarget = profile.target_night_mgdl ?? day
-  return night ? nightTarget : day
-}
-
-function isInTarget(glucose: number, target: number): boolean {
-  const lo = target * (1 - TARGET_TOLERANCE)
-  const hi = target * (1 + TARGET_TOLERANCE)
-  return glucose >= lo && glucose <= hi
-}
-
-function carbsFromEntry(entry: EntryRow): number | null {
-  const raw = entry.gpt_raw_response
-  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
-  const v = (raw as Record<string, unknown>).carboidratos_g
-  if (typeof v === 'number' && Number.isFinite(v)) return v
-  if (typeof v === 'string' && v.trim()) {
-    const n = Number(v.replace(',', '.'))
-    return Number.isFinite(n) ? n : null
-  }
-  return null
-}
-
-function sampleSd(values: number[]): number | null {
-  if (values.length < 2) return null
-  const mean = values.reduce((a, b) => a + b, 0) / values.length
-  let sumSq = 0
-  for (const v of values) {
-    const d = v - mean
-    sumSq += d * d
-  }
-  return Math.sqrt(sumSq / (values.length - 1))
-}
-
-function round1(n: number | null): number | null {
-  if (n == null || !Number.isFinite(n)) return null
-  return Math.round(n * 10) / 10
-}
-
-function emptyStats(): HistoryStats {
-  return {
-    count: 0,
-    avgGlucose: null,
-    minGlucose: null,
-    maxGlucose: null,
-    glucoseSd: null,
-    glucoseCvPercent: null,
-    inRange70_180Percent: null,
-    hypoPercent: null,
-    hypoCount: 0,
-    hyperPercent: null,
-    hyperCount: 0,
-    inTargetPercent: null,
-    avgAppliedU: null,
-    avgRecommendedU: null,
-    avgDoseDeltaU: null,
-    avgCarbsG: null,
-  }
-}
-
-function computeStats(entries: EntryRow[], profile: ProfileRow): HistoryStats {
-  if (entries.length === 0) return emptyStats()
-
-  let glucoseSum = 0
-  let minG = entries[0].glucose_mgdl
-  let maxG = entries[0].glucose_mgdl
-  let inTarget = 0
-  let inRange = 0
-  let hypo = 0
-  let hyper = 0
-  let appliedSum = 0
-  let appliedN = 0
-  let recommendedSum = 0
-  let recommendedN = 0
-  let deltaSum = 0
-  let deltaN = 0
-  let carbsSum = 0
-  let carbsN = 0
-  const glucoseValues: number[] = []
-
-  for (const e of entries) {
-    const g = e.glucose_mgdl
-    glucoseValues.push(g)
-    glucoseSum += g
-    if (g < minG) minG = g
-    if (g > maxG) maxG = g
-    if (g < CLINICAL_LOW) hypo++
-    else if (g > CLINICAL_HIGH) hyper++
-    else inRange++
-    if (isInTarget(g, resolveTarget(profile, e.recorded_at))) inTarget++
-    if (e.applied_insulin != null) {
-      appliedSum += e.applied_insulin
-      appliedN++
-    }
-    if (e.recommended_insulin != null) {
-      recommendedSum += e.recommended_insulin
-      recommendedN++
-    }
-    if (e.applied_insulin != null && e.recommended_insulin != null) {
-      deltaSum += e.recommended_insulin - e.applied_insulin
-      deltaN++
-    }
-    const carbs = carbsFromEntry(e)
-    if (carbs != null) {
-      carbsSum += carbs
-      carbsN++
-    }
-  }
-
-  const n = entries.length
-  const avgGlucose = glucoseSum / n
-  const sd = sampleSd(glucoseValues)
-  const cv = sd != null && avgGlucose > 0 ? (sd / avgGlucose) * 100 : null
-
-  return {
-    count: n,
-    avgGlucose: round1(avgGlucose),
-    minGlucose: minG,
-    maxGlucose: maxG,
-    glucoseSd: round1(sd),
-    glucoseCvPercent: round1(cv),
-    inRange70_180Percent: round1((inRange / n) * 100),
-    hypoPercent: round1((hypo / n) * 100),
-    hypoCount: hypo,
-    hyperPercent: round1((hyper / n) * 100),
-    hyperCount: hyper,
-    inTargetPercent: round1((inTarget / n) * 100),
-    avgAppliedU: round1(appliedN === 0 ? null : appliedSum / appliedN),
-    avgRecommendedU: round1(
-      recommendedN === 0 ? null : recommendedSum / recommendedN,
-    ),
-    avgDoseDeltaU: round1(deltaN === 0 ? null : deltaSum / deltaN),
-    avgCarbsG: round1(carbsN === 0 ? null : carbsSum / carbsN),
-  }
+function formatBasalTimes(raw: unknown): string {
+  if (!Array.isArray(raw) || raw.length === 0) return '—'
+  const labels = raw
+    .map((value) => {
+      const n = Number(value)
+      if (!Number.isFinite(n)) return null
+      const minute = ((Math.round(n) % 1440) + 1440) % 1440
+      const h = String(Math.floor(minute / 60)).padStart(2, '0')
+      const min = String(minute % 60).padStart(2, '0')
+      return `${h}:${min}`
+    })
+    .filter((label): label is string => label != null)
+  return labels.length > 0 ? labels.join(', ') : '—'
 }
 
 function diabetesLabel(type: string | null): string {
@@ -300,8 +137,15 @@ function summarizeEntries(entries: EntryRow[]) {
 type AchadoTipo = 'discrepancia' | 'irregularidade' | 'melhoria' | 'ajuste'
 type Severidade = 'alta' | 'media' | 'baixa'
 
+type Prioridade = {
+  titulo: string
+  porque: string
+  o_que_fazer: string
+}
+
 type AnalysisResult = {
   resumo: string
+  prioridades: Prioridade[]
   achados: Array<{
     tipo: AchadoTipo
     severidade: Severidade
@@ -321,10 +165,25 @@ function normalizeAnalysis(raw: Record<string, unknown>): AnalysisResult {
   const tipos = new Set(['discrepancia', 'irregularidade', 'melhoria', 'ajuste'])
   const sevs = new Set(['alta', 'media', 'baixa'])
 
+  const prioridadesRaw = Array.isArray(raw.prioridades) ? raw.prioridades : []
   const achadosRaw = Array.isArray(raw.achados) ? raw.achados : []
   const sugestoesRaw = Array.isArray(raw.sugestoes_prescricao)
     ? raw.sugestoes_prescricao
     : []
+
+  const prioridades = prioridadesRaw
+    .map((item) => {
+      if (!item || typeof item !== 'object') return null
+      const o = item as Record<string, unknown>
+      const titulo = String(o.titulo ?? '').trim()
+      if (!titulo) return null
+      return {
+        titulo,
+        porque: String(o.porque ?? '').trim(),
+        o_que_fazer: String(o.o_que_fazer ?? '').trim(),
+      }
+    })
+    .filter((x): x is Prioridade => x != null)
 
   const achados = achadosRaw
     .map((item) => {
@@ -362,6 +221,7 @@ function normalizeAnalysis(raw: Record<string, unknown>): AnalysisResult {
 
   return {
     resumo: String(raw.resumo ?? '').trim() || 'Análise concluída.',
+    prioridades,
     achados,
     sugestoes_prescricao,
     disclaimer:
@@ -372,6 +232,7 @@ function normalizeAnalysis(raw: Record<string, unknown>): AnalysisResult {
 
 const emptyAnalysis = (): AnalysisResult => ({
   resumo: 'Não há registros no período selecionado para analisar.',
+  prioridades: [],
   achados: [],
   sugestoes_prescricao: [],
   disclaimer:
@@ -483,12 +344,28 @@ Deno.serve(async (req) => {
 
     const { data: doctor, error: doctorError } = await userClient
       .from('doctors')
-      .select('id')
+      .select('id, supporter_status')
       .eq('id', user.id)
       .maybeSingle()
 
     if (doctorError || !doctor) {
       return jsonResponse({ error: 'Médico não encontrado' }, 403)
+    }
+
+    const supporterStatus = (doctor as { supporter_status?: string })
+      .supporter_status
+    if (
+      supporterStatus !== 'active' &&
+      supporterStatus !== 'grace' &&
+      supporterStatus !== 'canceled'
+    ) {
+      return jsonResponse(
+        {
+          error:
+            'A Análise com IA está disponível para médicos que apoiam o GlicoDose.',
+        },
+        403,
+      )
     }
 
     const { data: link, error: linkError } = await userClient
@@ -505,7 +382,7 @@ Deno.serve(async (req) => {
     const { data: profile, error: profileError } = await userClient
       .from('profiles')
       .select(
-        'id, full_name, diabetes_type, target_glucose_mgdl, target_night_mgdl, night_start_minute, night_end_minute, isf_mgdl_per_u, ic_ratio, isf_schedule, ic_schedule, rapid_insulin_name, dose_step, insulin_duration_hours',
+        'id, full_name, diabetes_type, target_glucose_mgdl, target_night_mgdl, night_start_minute, night_end_minute, isf_mgdl_per_u, ic_ratio, isf_schedule, ic_schedule, rapid_insulin_name, dose_step, insulin_duration_hours, basal_insulin_name, basal_dose_u, basal_times_minutes',
       )
       .eq('id', patientId)
       .maybeSingle()
@@ -539,7 +416,7 @@ Deno.serve(async (req) => {
     }
 
     const entries = ((entriesData ?? []) as EntryRow[]).slice().reverse()
-    const stats = computeStats(entries, profileRow)
+    const stats = computeHistoryAiStats(entries, profileRow)
 
     if (entries.length === 0) {
       return jsonResponse({
@@ -572,29 +449,53 @@ Deno.serve(async (req) => {
         insulina_rapida: profileRow.rapid_insulin_name,
         dose_step: profileRow.dose_step,
         duracao_insulina_h: profileRow.insulin_duration_hours,
+        basal: {
+          nome: profileRow.basal_insulin_name,
+          dose_u: profileRow.basal_dose_u,
+          horarios: formatBasalTimes(profileRow.basal_times_minutes),
+        },
+        janela_noturna: `${formatClockMinute(profileRow.night_start_minute, 1200)}–${formatClockMinute(profileRow.night_end_minute, 359)}`,
       },
       metricas: stats,
       registros: summarizeEntries(entries),
     }
 
     const systemPrompt = `Você é um assistente de apoio clínico para endocrinologistas/médicos que acompanham pacientes com diabetes usando um app de bolus de insulina rápida.
-Analise o histórico (glicemias, refeições, insulina recomendada vs aplicada, parâmetros de prescrição) e identifique:
-- discrepâncias (ex.: dose aplicada ≠ recomendada de forma recorrente)
-- irregularidades (hipos/hipers, alta variabilidade, padrões horários)
-- possíveis melhorias de adesão ou registro
-- ajustes possíveis de parâmetros (FSI, I:C, meta dia/noite) — apenas como hipóteses para o médico revisar
+Analise o histórico (glicemias, refeições, insulina recomendada vs aplicada, parâmetros de prescrição incluindo basal e janela noturna) e entregue um briefing de controle: risco, padrão por faixa horária, basal vs bolus, adesão e o que revisar na consulta.
+
+Cubra os itens abaixo nesta ordem. Omita o item quando os dados não sustentarem; não preencha com generalidades.
+1. Segurança: hipoglicemia < 70 mg/dL (metricas.hypoCount / hypoPercent), grave < 54 (metricas.severeHypoCount) e noturna (metricas.night, janela em perfil.janela_noturna). Se houver, hipoglicemia nas horas seguintes a um bolus aplicado.
+2. Controle: tempo no intervalo 70–180 (metricas.inRange70_180Percent), acima de 180 (metricas.hyperPercent / hyperCount) e ≥ 250 (metricas.veryHighCount / veryHighPercent), média (metricas.avgGlucose) e CV (metricas.glucoseCvPercent).
+3. Alavanca por horário, usando metricas.bands, metricas.day e metricas.night:
+   - madrugada e noite: hipótese de basal (dose ou horário em perfil.basal), sem sugerir dose em unidades.
+   - subida da madrugada para a manhã: fenômeno do alvorecer, se a média da manhã for claramente maior.
+   - almoço, tarde e noite pós-refeição: I:C da faixa correspondente (perfil.ic_faixas) e adequação do bolus da refeição.
+4. Adesão: viés de dose (metricas.doseGapPercent, appliedLessCount ≥ 2 U a menos, appliedMoreCount ≥ 2 U a mais), refeição com comida ou carboidrato e sem insulina aplicada, e dias do período sem registro.
+5. Refeição → glicemia seguinte: nos registros, ligar food_text, carboidratos_g e dose aplicada à glicemia das 2–4 horas seguintes, quando esse par existir.
+6. Empilhamento: boluses aplicados com intervalo menor que perfil.duracao_insulina_h.
+7. Tendência: compare a primeira metade dos registros com a segunda (melhora ou piora da glicemia média ou do tempo 70–180).
+8. O que não mudar: uma frase quando a amostra for pequena ou a faixa tiver poucos registros.
+
+Limites:
+- resumo: 4 a 6 frases com status do controle, risco principal, alavanca principal (basal, I:C de uma faixa, ou adesão) e tendência.
+- achados: 3 a 6 itens, só com evidência numérica (números, datas, faixas, basal).
+- prioridades: 2 a 4 itens, ordenados do que o médico deve revisar primeiro na consulta.
 
 Regras:
 - Responda SOMENTE JSON válido, sem markdown.
-- Não prescreva doses absolutas de insulina.
-- Seja específico e cite evidências dos dados (números, datas, padrões).
-- Linguagem em português do Brasil, objetiva.
+- Não prescreva doses absolutas de insulina (nem bolus nem basal, em unidades).
+- Linguagem em português do Brasil, objetiva, útil para decidir o acompanhamento.
 - Severidade: alta (risco clínico evidente), media, baixa.
-- Coeficiente de variação (CV) glicêmico: meta típica < 36%. Use metricas.glucoseCvPercent quando disponível. Só classifique como irregularidade de "alta variabilidade" se CV ≥ 36. Se CV < 36, não emita achado de alta variabilidade (pode citar o CV no resumo como dentro da meta, se útil).
+- Coeficiente de variação (CV) glicêmico: meta típica < 36%. Só classifique como irregularidade de "alta variabilidade" se CV ≥ 36. Se CV < 36, não emita achado de alta variabilidade (pode citar o CV no resumo como dentro da meta, se útil).
+- sugestoes_prescricao: somente FSI, I:C, meta_dia, meta_noite, dose_step, duracao_insulina ou outro parâmetro de prescrição já existente. A observacao deve dizer a direção (subir ou descer a sensibilidade ou as gramas por unidade) e a faixa horária. valor_sugerido só quando o padrão se repetir; nunca uma dose de insulina em U.
+- Ignore achados genéricos que não mudem a conduta.
 
 Formato:
 {
-  "resumo": "string curta",
+  "resumo": "4 a 6 frases",
+  "prioridades": [
+    { "titulo": "o que revisar primeiro", "porque": "evidência numérica", "o_que_fazer": "conduta de acompanhamento, sem dose de insulina" }
+  ],
   "achados": [
     {
       "tipo": "discrepancia|irregularidade|melhoria|ajuste",
@@ -605,7 +506,7 @@ Formato:
     }
   ],
   "sugestoes_prescricao": [
-    { "parametro": "FSI|I:C|meta_dia|meta_noite|dose_step|duracao_insulina|outro", "observacao": "string", "valor_sugerido": number_or_null }
+    { "parametro": "FSI|I:C|meta_dia|meta_noite|dose_step|duracao_insulina|outro", "observacao": "direção e faixa horária", "valor_sugerido": number_or_null }
   ],
   "disclaimer": "string curta lembrando que é apoio clínico"
 }`
@@ -621,6 +522,7 @@ Formato:
       body: JSON.stringify({
         model,
         temperature: 0.2,
+        max_tokens: 1800,
         response_format: { type: 'json_object' },
         messages: [
           { role: 'system', content: systemPrompt },
