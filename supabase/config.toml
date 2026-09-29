@@ -20,3 +20,8 @@ verify_jwt = false
 # Public marketing-site Apoiar (no doctor session).
 [functions.create-public-support-checkout]
 verify_jwt = false
+
+# Public contact form (site and doctor portal). Login is optional;
+# the portal still sends the signed-in doctor's name and email.
+[functions.send-contact]
+verify_jwt = false

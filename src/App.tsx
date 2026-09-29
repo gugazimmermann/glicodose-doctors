@@ -10,6 +10,7 @@ import { PatientDetailPage } from './pages/PatientDetailPage'
 import { CompleteProfilePage } from './pages/CompleteProfilePage'
 import { ProfilePage } from './pages/ProfilePage'
 import { SupportPage } from './pages/SupportPage'
+import { ContactPage } from './pages/ContactPage'
 
 export default function App() {
   return (
@@ -24,6 +25,7 @@ export default function App() {
                 <Route index element={<PatientsPage />} />
                 <Route path="vincular" element={<LinkPatientPage />} />
                 <Route path="perfil" element={<ProfilePage />} />
+                <Route path="contato" element={<ContactPage />} />
                 <Route path="apoiar" element={<SupportPage />} />
                 <Route
                   path="pacientes/:patientId"

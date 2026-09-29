@@ -31,9 +31,9 @@ supabase secrets set OPENAI_API_KEY='sk-...'
 
 Referência local (sem `VITE_`): `OPENAI_API_KEY` em `.env` — não vai para o bundle do React.
 
-### Contato do site (`send-contact` + Resend)
+### Contato (`send-contact` + Resend)
 
-Usado por `diabetes-site` em `/contato`. O Resend **envia** e-mail; a caixa `contato@glicodose.app` precisa existir no provedor de inbox (Google Workspace, etc.).
+Usado por `diabetes-site` em `/contato` e pelo portal médico em `/contato`. O Resend **envia** e-mail; a caixa `contato@glicodose.app` precisa existir no provedor de inbox (Google Workspace, etc.). Mensagens do portal levam origem, tipo (reclamação, ideia, sugestão, dúvida ou outro), nome, e-mail e CRM.
 
 1. Conta em [resend.com](https://resend.com)
 2. **Domains → Add Domain** → `glicodose.app` (criar SPF/DKIM no DNS; aguardar **Verified**)
@@ -71,4 +71,4 @@ supabase functions deploy send-contact
 - `create-public-support-checkout`: **sem login** — usado pelo site de marketing (`diabetes-site` `/apoiar`). Mesmos `STRIPE_PRICE_SUPPORT_*`. Não grava em `doctors`; o webhook espelha em `public_supporters`.
 - `stripe-doctor-webhook`: espelha portal médico em `doctors` e checkouts `source=marketing-site` em `public_supporters` (admin Doações).
 - `create-public-support-portal`: **sem login** — abre o Billing Portal pelo e-mail do checkout (`diabetes-site` `/apoiar`).
-- `send-contact`: **sem login** — formulário de contato do site (`diabetes-site` `/contato`) via Resend → `CONTACT_TO_EMAIL`.
+- `send-contact`: **sem login** — formulário de contato do site (`diabetes-site` `/contato`) e do portal médico (`/contato`) via Resend → `CONTACT_TO_EMAIL`. O portal manda `source=medicos`.

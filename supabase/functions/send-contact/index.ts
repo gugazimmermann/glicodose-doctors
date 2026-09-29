@@ -1,4 +1,5 @@
-// Public contact form for the marketing site (diabetes-site /contato).
+// Public contact form for the marketing site (diabetes-site /contato)
+// and the doctor portal (diabetes-medicos /contato).
 // Deploy: supabase functions deploy send-contact
 //
 // Secrets:
@@ -18,8 +19,17 @@ const MAX_NAME = 120
 const MAX_EMAIL = 254
 const MAX_MESSAGE = 5000
 const MAX_SUBJECT = 200
+const MAX_CRM = 40
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+
+const DOCTOR_CATEGORIES = new Set([
+  'Reclamação',
+  'Ideia',
+  'Sugestão',
+  'Dúvida',
+  'Outro',
+])
 
 function escapeHtml(value: string): string {
   return value
@@ -60,6 +70,9 @@ Deno.serve(async (req) => {
       email?: string
       message?: string
       subject?: string
+      source?: string
+      category?: string
+      crm?: string
       website?: string // honeypot — bots fill this; humans leave empty
     }
 
@@ -72,6 +85,13 @@ Deno.serve(async (req) => {
     const email = trimOrEmpty(body.email)
     const message = trimOrEmpty(body.message)
     const subjectExtra = trimOrEmpty(body.subject)
+    const source = trimOrEmpty(body.source) || 'site'
+    const category = trimOrEmpty(body.category)
+    const crm = trimOrEmpty(body.crm)
+
+    if (source !== 'site' && source !== 'medicos') {
+      return jsonResponse({ error: 'Origem inválida.' }, 400)
+    }
 
     if (!name || !email || !message) {
       return jsonResponse(
@@ -88,25 +108,61 @@ Deno.serve(async (req) => {
     if (message.length > MAX_MESSAGE) {
       return jsonResponse({ error: 'Mensagem muito longa.' }, 400)
     }
-    if (subjectExtra.length > MAX_SUBJECT) {
+    if (source === 'site' && subjectExtra.length > MAX_SUBJECT) {
       return jsonResponse({ error: 'Assunto muito longo.' }, 400)
     }
-
-    const subject = subjectExtra
-      ? `Contato pelo site — ${subjectExtra}`
-      : `Contato pelo site — ${name}`
+    if (source === 'medicos') {
+      if (!DOCTOR_CATEGORIES.has(category)) {
+        return jsonResponse({ error: 'Tipo de mensagem inválido.' }, 400)
+      }
+      if (crm.length > MAX_CRM) {
+        return jsonResponse({ error: 'CRM muito longo.' }, 400)
+      }
+    }
 
     const safeName = escapeHtml(name)
     const safeEmail = escapeHtml(email)
     const safeMessage = escapeHtml(message).replaceAll('\n', '<br>')
+    const safeCategory = escapeHtml(category)
+    const safeCrm = escapeHtml(crm)
 
-    const html = `
+    const subject =
+      source === 'medicos'
+        ? `Portal médico — ${category} — ${name}`
+        : subjectExtra
+          ? `Contato pelo site — ${subjectExtra}`
+          : `Contato pelo site — ${name}`
+
+    const html =
+      source === 'medicos'
+        ? `
+      <p><strong>Origem:</strong> Portal médico</p>
+      <p><strong>Tipo:</strong> ${safeCategory}</p>
+      <p><strong>Nome:</strong> ${safeName}</p>
+      <p><strong>E-mail:</strong> ${safeEmail}</p>
+      ${crm ? `<p><strong>CRM:</strong> ${safeCrm}</p>` : ''}
+      <p><strong>Mensagem:</strong></p>
+      <p>${safeMessage}</p>
+    `
+        : `
       <p><strong>Nome:</strong> ${safeName}</p>
       <p><strong>E-mail:</strong> ${safeEmail}</p>
       <p><strong>Mensagem:</strong></p>
       <p>${safeMessage}</p>
     `
-    const text = `Nome: ${name}\nE-mail: ${email}\n\nMensagem:\n${message}`
+    const doctorLines = [
+      'Origem: Portal médico',
+      `Tipo: ${category}`,
+      `Nome: ${name}`,
+      `E-mail: ${email}`,
+    ]
+    if (crm) doctorLines.push(`CRM: ${crm}`)
+    doctorLines.push('', 'Mensagem:', message)
+
+    const text =
+      source === 'medicos'
+        ? doctorLines.join('\n')
+        : `Nome: ${name}\nE-mail: ${email}\n\nMensagem:\n${message}`
 
     const resendRes = await fetch('https://api.resend.com/emails', {
       method: 'POST',

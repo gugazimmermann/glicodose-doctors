@@ -40,6 +40,7 @@ describe('AppHeader', () => {
     expect(screen.getAllByRole('link', { name: 'Pacientes' }).length).toBeGreaterThan(0)
     expect(screen.getAllByRole('link', { name: 'Vincular' }).length).toBeGreaterThan(0)
     expect(screen.getAllByRole('link', { name: 'Perfil' }).length).toBeGreaterThan(0)
+    expect(screen.getAllByRole('link', { name: 'Contato' }).length).toBeGreaterThan(0)
     expect(screen.getAllByRole('link', { name: 'Apoiar' }).length).toBeGreaterThan(0)
   })
 

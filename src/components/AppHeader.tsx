@@ -39,6 +39,9 @@ function MainNav({
       <NavLink to="/perfil" className={navLinkClass}>
         Perfil
       </NavLink>
+      <NavLink to="/contato" className={navLinkClass}>
+        Contato
+      </NavLink>
       <NavLink
         to="/apoiar"
         className={highlightSupport ? supportCtaClass : navLinkClass}
